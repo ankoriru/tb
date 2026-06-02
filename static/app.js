@@ -1,23 +1,41 @@
 (function(){
+    'use strict';
+    console.log('[APP] Script loaded');
+
     // --- User ID ---
-    let USER_ID = localStorage.getItem('whisper_user_id');
+    var USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
         USER_ID = 'u-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36).slice(-4);
         localStorage.setItem('whisper_user_id', USER_ID);
+        console.log('[APP] New user ID:', USER_ID);
+    } else {
+        console.log('[APP] Existing user ID:', USER_ID);
     }
 
-    const API = '';
-    let pollTimer = null;
-    let currentJobId = null;
-    let currentSpeakers = {};
-    let mediaRecorder = null;
-    let recChunks = [];
-    let recStartTime = 0;
-    let recTimerInterval = null;
-    let activeFilter = 'all';
+    var API = '';
+    var pollTimer = null;
+    var currentJobId = null;
+    var currentSpeakers = {};
+    var mediaRecorder = null;
+    var recChunks = [];
+    var recStartTime = 0;
+    var recTimerInterval = null;
+    var activeFilter = 'all';
 
     // --- DOM helpers ---
-    function $(id) { return document.getElementById(id); }
+    function $(id) {
+        var el = document.getElementById(id);
+        if (!el) console.warn('[APP] Element not found: #' + id);
+        return el;
+    }
+
+    function on(id, event, handler) {
+        var el = $(id);
+        if (el) {
+            el.addEventListener(event, handler);
+            console.log('[APP] Bound', event, 'to #' + id);
+        }
+    }
 
     // --- Toast ---
     function toast(msg, type) {
@@ -62,10 +80,11 @@
 
     // --- Jobs ---
     function loadJobs() {
+        console.log('[APP] loadJobs');
         apiGet('/api/jobs').then(function(data) {
             renderJobs(data.jobs || []);
         }).catch(function(e) {
-            console.error('loadJobs error', e);
+            console.error('[APP] loadJobs error:', e);
         });
     }
 
@@ -92,56 +111,83 @@
 
         var list = $('recordsList');
         if (!filtered.length) {
-            list.innerHTML = '<div class="empty-state"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg><p>Записей не найдено</p></div>';
+            if (list) list.innerHTML = '<div class="empty-state"><div style="font-size:48px">🎙️</div><p>Записей не найдено</p></div>';
             return;
         }
 
-        list.innerHTML = filtered.map(function(j) {
-            var stClass = 'status-' + j.status;
-            var stText = {pending:'В очереди', processing:'Обработка', done:'Готово', failed:'Ошибка'}[j.status] || j.status;
-            var activeCls = currentJobId === j.id ? 'active' : '';
-            return '<div class="record-card ' + activeCls + '" data-id="' + esc(j.id) + '">' +
-                '<div class="record-title">' + esc(j.filename || 'Без имени') + '</div>' +
-                '<div class="record-meta"><span>' + formatDate(j.created_at) + '</span><span class="record-status ' + stClass + '">' + stText + '</span></div>' +
-                '<div class="record-tags"><span class="record-tag">' + esc(j.id) + '</span></div>' +
-                '</div>';
-        }).join('');
+        if (list) {
+            list.innerHTML = filtered.map(function(j) {
+                var stClass = 'status-' + j.status;
+                var stText = {pending:'В очереди', processing:'Обработка', done:'Готово', failed:'Ошибка'}[j.status] || j.status;
+                var activeCls = currentJobId === j.id ? 'active' : '';
+                return '<div class="record-card ' + activeCls + '" data-id="' + esc(j.id) + '">' +
+                    '<div class="record-title">' + esc(j.filename || 'Без имени') + '</div>' +
+                    '<div class="record-meta"><span>' + formatDate(j.created_at) + '</span><span class="record-status ' + stClass + '">' + stText + '</span></div>' +
+                    '<div class="record-tags"><span class="record-tag">' + esc(j.id) + '</span></div>' +
+                    '</div>';
+            }).join('');
 
-        list.querySelectorAll('.record-card').forEach(function(card) {
-            card.addEventListener('click', function() { openJob(card.dataset.id); });
-        });
+            list.querySelectorAll('.record-card').forEach(function(card) {
+                card.addEventListener('click', function() { openJob(card.dataset.id); });
+            });
+        }
     }
 
     // --- View job ---
     function openJob(id) {
+        console.log('[APP] openJob', id);
         currentJobId = id;
         apiGet('/api/status/' + id).then(function(j) {
-            $('uploadScreen').style.display = 'none';
-            $('viewScreen').style.display = 'block';
-            $('viewMeta').textContent = 'ID: ' + j.job_id + ' | Создано: ' + formatDate(j.created_at) + ' | Начато: ' + formatDate(j.started_at) + ' | Завершено: ' + formatDate(j.finished_at);
+            var us = $('uploadScreen');
+            var vs = $('viewScreen');
+            if (us) us.style.display = 'none';
+            if (vs) vs.style.display = 'block';
+
+            var vm = $('viewMeta');
+            if (vm) vm.textContent = 'ID: ' + j.job_id + ' | Создано: ' + formatDate(j.created_at) + ' | Начато: ' + formatDate(j.started_at) + ' | Завершено: ' + formatDate(j.finished_at);
+
             var stText = {pending:'В очереди', processing:'Обработка', done:'Готово', failed:'Ошибка'}[j.status] || j.status;
-            $('viewStatus').innerHTML = '<span class="record-status status-' + j.status + '">' + stText + '</span>';
+            var vsb = $('viewStatus');
+            if (vsb) vsb.innerHTML = '<span class="record-status status-' + j.status + '">' + stText + '</span>';
 
             if (j.status === 'done') {
                 currentSpeakers = j.speakers || {};
                 renderSpeakers(currentSpeakers);
-                $('speakersPanel').style.display = 'block';
+                var sp = $('speakersPanel');
+                if (sp) sp.style.display = 'block';
+
                 fetch(API + '/api/download/' + id + '?format=txt', { headers: { 'X-User-ID': USER_ID } })
                     .then(function(r) { return r.text(); })
-                    .then(function(txt) { $('viewText').textContent = txt; })
-                    .catch(function() { $('viewText').textContent = 'Текст недоступен'; });
-                $('downloadTxtBtn').style.display = '';
-                $('downloadSrtBtn').style.display = '';
+                    .then(function(txt) {
+                        var vt = $('viewText');
+                        if (vt) vt.textContent = txt;
+                    }).catch(function() {
+                        var vt = $('viewText');
+                        if (vt) vt.textContent = 'Текст недоступен';
+                    });
+
+                var dtb = $('downloadTxtBtn');
+                var dsb = $('downloadSrtBtn');
+                if (dtb) dtb.style.display = '';
+                if (dsb) dsb.style.display = '';
             } else if (j.error) {
-                $('viewText').textContent = 'Ошибка: ' + j.error;
-                $('speakersPanel').style.display = 'none';
-                $('downloadTxtBtn').style.display = 'none';
-                $('downloadSrtBtn').style.display = 'none';
+                var vt = $('viewText');
+                if (vt) vt.textContent = 'Ошибка: ' + j.error;
+                var sp = $('speakersPanel');
+                if (sp) sp.style.display = 'none';
+                var dtb = $('downloadTxtBtn');
+                var dsb = $('downloadSrtBtn');
+                if (dtb) dtb.style.display = 'none';
+                if (dsb) dsb.style.display = 'none';
             } else {
-                $('viewText').textContent = 'Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.';
-                $('speakersPanel').style.display = 'none';
-                $('downloadTxtBtn').style.display = 'none';
-                $('downloadSrtBtn').style.display = 'none';
+                var vt = $('viewText');
+                if (vt) vt.textContent = 'Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.';
+                var sp = $('speakersPanel');
+                if (sp) sp.style.display = 'none';
+                var dtb = $('downloadTxtBtn');
+                var dsb = $('downloadSrtBtn');
+                if (dtb) dtb.style.display = 'none';
+                if (dsb) dsb.style.display = 'none';
             }
             loadJobs();
         }).catch(function(e) {
@@ -153,12 +199,14 @@
         var list = $('speakersList');
         var keys = Object.keys(speakers || {});
         if (!keys.length) {
-            list.innerHTML = '<p style="font-size:13px;color:var(--text-secondary)">Спикеры не определены</p>';
+            if (list) list.innerHTML = '<p style="font-size:13px;color:var(--text-secondary)">Спикеры не определены</p>';
             return;
         }
-        list.innerHTML = keys.map(function(num) {
-            return '<div class="speaker-row"><span class="speaker-label">Спикер ' + esc(num) + '</span><input type="text" data-spk="' + esc(num) + '" value="' + esc(speakers[num]) + '" placeholder="Введите ФИО или название"></div>';
-        }).join('');
+        if (list) {
+            list.innerHTML = keys.map(function(num) {
+                return '<div class="speaker-row"><span class="speaker-label">Спикер ' + esc(num) + '</span><input type="text" data-spk="' + esc(num) + '" value="' + esc(speakers[num]) + '" placeholder="Введите ФИО или название"></div>';
+            }).join('');
+        }
     }
 
     function saveSpeakers() {
@@ -175,15 +223,19 @@
     }
 
     function showUpload() {
+        console.log('[APP] showUpload');
         currentJobId = null;
         currentSpeakers = {};
-        $('viewScreen').style.display = 'none';
-        $('uploadScreen').style.display = 'block';
+        var vs = $('viewScreen');
+        var us = $('uploadScreen');
+        if (vs) vs.style.display = 'none';
+        if (us) us.style.display = 'block';
         loadJobs();
     }
 
     // --- Upload ---
     function uploadFile(file) {
+        console.log('[APP] uploadFile', file.name);
         var fd = new FormData();
         fd.append('file', file);
         var card = document.createElement('div');
@@ -193,6 +245,7 @@
         if (zone && zone.parentNode) zone.parentNode.insertBefore(card, zone.nextSibling);
 
         apiPost('/api/upload', fd).then(function(data) {
+            console.log('[APP] Upload success', data);
             var fill = card.querySelector('.progress-fill');
             if (fill) fill.style.width = '100%';
             var status = card.querySelector('.progress-status');
@@ -200,6 +253,7 @@
             toast('Файл принят: ' + data.job_id, 'success');
             loadJobs();
         }).catch(function(e) {
+            console.error('[APP] Upload error', e);
             var status = card.querySelector('.progress-status');
             if (status) status.textContent = 'Ошибка: ' + e.message;
             toast('Ошибка загрузки: ' + e.message, 'error');
@@ -215,7 +269,7 @@
     }
 
     function startRecording(audioOnly) {
-        audioOnly = audioOnly !== false;
+        console.log('[APP] startRecording', audioOnly);
         var constraints;
         if (audioOnly) {
             constraints = navigator.mediaDevices.getUserMedia({ audio: true });
@@ -257,6 +311,7 @@
     }
 
     function startBothRecording() {
+        console.log('[APP] startBothRecording');
         Promise.all([
             navigator.mediaDevices.getUserMedia({ audio: true }),
             navigator.mediaDevices.getDisplayMedia({ video: false, audio: true })
@@ -296,37 +351,7 @@
         });
     }
 
-    // --- Event bindings (все через addEventListener на document.getElementById) ---
-    function bind(id, event, handler) {
-        var el = $(id);
-        if (el) el.addEventListener(event, handler);
-        else console.warn('Element not found: #' + id);
-    }
-
-    bind('dropZone', 'click', function() { var inp = $('fileInput'); if (inp) inp.click(); });
-    bind('dropZone', 'dragover', function(e) { e.preventDefault(); $('dropZone').classList.add('dragover'); });
-    bind('dropZone', 'dragleave', function() { $('dropZone').classList.remove('dragover'); });
-    bind('dropZone', 'drop', function(e) {
-        e.preventDefault();
-        $('dropZone').classList.remove('dragover');
-        Array.from(e.dataTransfer.files).forEach(uploadFile);
-    });
-    bind('fileInput', 'change', function() {
-        var inp = $('fileInput');
-        if (inp) Array.from(inp.files).forEach(uploadFile);
-    });
-
-    bind('recordMicBtn', 'click', function() { startRecording(true); });
-    bind('recordSystemBtn', 'click', function() { startRecording(false); });
-    bind('recordBothBtn', 'click', startBothRecording);
-    bind('stopRecBtn', 'click', function() {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-    });
-
-    bind('filterAll', 'click', function() { setFilter('all'); });
-    bind('filterDone', 'click', function() { setFilter('done'); });
-    bind('filterProcessing', 'click', function() { setFilter('processing'); });
-
+    // --- Filters ---
     function setFilter(f) {
         activeFilter = f;
         ['filterAll','filterDone','filterProcessing'].forEach(function(id) {
@@ -339,22 +364,73 @@
         loadJobs();
     }
 
-    bind('searchToggle', 'click', function() {
+    // === EVENT BINDINGS ===
+    console.log('[APP] Binding events...');
+
+    on('dropZone', 'click', function() {
+        console.log('[APP] dropZone click');
+        var inp = $('fileInput');
+        if (inp) inp.click();
+    });
+
+    on('dropZone', 'dragover', function(e) {
+        e.preventDefault();
+        var dz = $('dropZone');
+        if (dz) dz.classList.add('dragover');
+    });
+
+    on('dropZone', 'dragleave', function() {
+        var dz = $('dropZone');
+        if (dz) dz.classList.remove('dragover');
+    });
+
+    on('dropZone', 'drop', function(e) {
+        e.preventDefault();
+        console.log('[APP] dropZone drop');
+        var dz = $('dropZone');
+        if (dz) dz.classList.remove('dragover');
+        Array.from(e.dataTransfer.files).forEach(uploadFile);
+    });
+
+    on('fileInput', 'change', function() {
+        console.log('[APP] fileInput change');
+        var inp = $('fileInput');
+        if (inp) Array.from(inp.files).forEach(uploadFile);
+    });
+
+    on('recordMicBtn', 'click', function() { startRecording(true); });
+    on('recordSystemBtn', 'click', function() { startRecording(false); });
+    on('recordBothBtn', 'click', startBothRecording);
+    on('stopRecBtn', 'click', function() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+    });
+
+    on('filterAll', 'click', function() { setFilter('all'); });
+    on('filterDone', 'click', function() { setFilter('done'); });
+    on('filterProcessing', 'click', function() { setFilter('processing'); });
+
+    on('searchToggle', 'click', function() {
         var box = $('searchBox');
         if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
     });
-    bind('searchInput', 'input', loadJobs);
+    on('searchInput', 'input', loadJobs);
 
-    bind('menuToggle', 'click', function() {
+    on('menuToggle', 'click', function() {
         var sb = $('sidebar');
         if (sb) sb.classList.toggle('collapsed');
     });
 
-    bind('newRecordBtn', 'click', showUpload);
-    bind('sidebarNewBtn', 'click', showUpload);
-    bind('backBtn', 'click', showUpload);
+    on('newRecordBtn', 'click', function() {
+        console.log('[APP] newRecordBtn click');
+        showUpload();
+    });
+    on('sidebarNewBtn', 'click', function() {
+        console.log('[APP] sidebarNewBtn click');
+        showUpload();
+    });
+    on('backBtn', 'click', showUpload);
 
-    bind('deleteJobBtn', 'click', function() {
+    on('deleteJobBtn', 'click', function() {
         if (!currentJobId) return;
         if (!confirm('Удалить задачу ' + currentJobId + '?')) return;
         apiDelete('/api/jobs/' + currentJobId).then(function() {
@@ -365,37 +441,39 @@
         });
     });
 
-    bind('downloadTxtBtn', 'click', function() {
+    on('downloadTxtBtn', 'click', function() {
         if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt', '_blank');
     });
-    bind('downloadSrtBtn', 'click', function() {
+    on('downloadSrtBtn', 'click', function() {
         if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=srt', '_blank');
     });
 
-    bind('saveSpeakersBtn', 'click', saveSpeakers);
+    on('saveSpeakersBtn', 'click', saveSpeakers);
 
-    bind('paramsToggle', 'click', function() {
+    on('paramsToggle', 'click', function() {
         var body = $('paramsBody');
         var toggle = $('paramsToggle');
+        var chevron = $('paramsChevron');
         if (!body || !toggle) return;
         var open = body.style.display !== 'none';
         body.style.display = open ? 'none' : 'block';
         toggle.classList.toggle('open', !open);
+        if (chevron) chevron.textContent = open ? '▼' : '▲';
     });
 
-    // Banner close
-    bind('bannerClose', 'click', function() {
+    on('bannerClose', 'click', function() {
         var banner = $('sessionBanner');
         if (banner) banner.style.display = 'none';
         localStorage.setItem('banner_closed', '1');
     });
+
     if (localStorage.getItem('banner_closed') === '1') {
         var banner = $('sessionBanner');
         if (banner) banner.style.display = 'none';
     }
 
-    // Clear all
-    bind('clearAllBtn', 'click', function() {
+    on('clearAllBtn', 'click', function() {
+        console.log('[APP] clearAllBtn click');
         if (!confirm('⚠️ ВНИМАНИЕ
 
 Все загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.
@@ -417,7 +495,7 @@
         });
     });
 
-    // Polling
+    // --- Polling ---
     function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(function() {
@@ -428,7 +506,9 @@
         }, 5000);
     }
 
-    // Init
+    // --- Init ---
+    console.log('[APP] Initializing...');
     loadJobs();
     startPolling();
+    console.log('[APP] Initialized');
 })();
