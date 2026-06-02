@@ -58,12 +58,6 @@
                         <p>Записей не найдено</p>
                     </div>
                 </div>
-                <div class="sidebar-footer">
-                    <button class="btn btn-small btn-danger-outline" id="clearAllBtn">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        Очистить все
-                    </button>
-                </div>
             </aside>
 
             <main class="content" id="content">
@@ -71,13 +65,13 @@
                     <div class="upload-card">
                         <div class="upload-header">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mic-icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
-                            <h2>Загрузка аудио</h2>
+                            <h2>Загрузка аудио или видео</h2>
                         </div>
                         <div class="drop-zone" id="dropZone">
                             <input type="file" id="fileInput" accept="video/*,audio/*" multiple hidden>
                             <div class="drop-content">
                                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                                <p>Перетащите аудиофайлы сюда или нажмите для выбора</p>
+                                <p>Перетащите аудио/видео файлы сюда или нажмите для выбора</p>
                                 <span class="formats">Поддерживаются форматы MP3, WAV, M4A, MP4, MOV, AVI, MKV и другие</span>
                             </div>
                         </div>
@@ -178,6 +172,14 @@
                     <div class="view-content">
                         <pre id="viewText"></pre>
                     </div>
+                </div>
+
+                <!-- Кнопка Очистить все — справа снизу -->
+                <div class="clear-all-wrap" id="clearAllWrap">
+                    <button class="btn btn-danger-outline" id="clearAllBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        Очистить все записи
+                    </button>
                 </div>
             </main>
         </div>
