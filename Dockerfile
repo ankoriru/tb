@@ -1,4 +1,14 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
+
+# Все кэши и временные файлы — строго в Persistent Volume
+ENV HF_HOME=/app/data/hf_cache
+ENV HUGGINGFACE_HUB_CACHE=/app/data/hf_cache
+ENV HUGGINGFACE_HUB_VERBOSITY=error
+ENV TRANSFORMERS_CACHE=/app/data/transformers_cache
+ENV XDG_CACHE_HOME=/app/data/cache
+ENV HOME=/app/data/home
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # Установка ffmpeg и системных библиотек
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -8,15 +18,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Зависимости
+# Зависимости (без кэша pip)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Директории для persistent данных
-RUN mkdir -p /app/data/uploads /app/data/results /app/data/models
+# Создаём директории для persistent данных и кэшей
+RUN mkdir -p /app/data/uploads /app/data/results /app/data/models \
+    /app/data/hf_cache /app/data/cache /app/data/home/.cache
 VOLUME ["/app/data"]
 
 COPY . .
 
-# Модель НЕ качаем здесь — скачается при первом старте в /app/data/models
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--timeout", "120"]
+# Gunicorn: таймаут 120 сек, 1 воркер (мало RAM), 4 потока для API
+CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", \
+     "--workers", "1", "--threads", "4", "--timeout", "120", \
+     "--preload"]
