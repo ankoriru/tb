@@ -60,7 +60,6 @@
                             <h2>Загрузка аудио или видео</h2>
                         </div>
 
-                        <!-- Drop zone с overlay input -->
                         <div class="drop-zone" id="dropZone">
                             <input type="file" id="fileInput" accept="video/*,audio/*" multiple>
                             <div class="drop-content">
@@ -75,7 +74,6 @@
                         </div>
 
                         <div class="divider"><span>или</span></div>
-
                         <div class="record-section">
                             <h3>🎙️ Аудиозапись</h3>
                             <div class="record-buttons">
@@ -87,6 +85,7 @@
                                 <p><strong>🎤 Микрофон:</strong> Записывает только ваш голос</p>
                                 <p><strong>🖥️ Системный звук:</strong> Записывает звук с экрана. <span style="color:var(--danger)">Только Chrome/Edge</span></p>
                                 <p><strong>🎤+🖥️ Микрофон + система:</strong> Для онлайн-встреч. При выборе вкладки включите <strong>«Поделиться аудио»</strong></p>
+                                <p style="color:var(--text-secondary);font-size:11px;margin-top:6px">💡 Для записи Zoom/Teams откройте их в браузере и захватите эту вкладку</p>
                             </div>
                             <div class="recorder-status" id="recorderStatus" style="display:none">
                                 <div class="recorder-wave">
@@ -144,6 +143,13 @@
                     <div class="view-meta" id="viewMeta"></div>
                     <div class="view-status-badge" id="viewStatus"></div>
 
+                    <!-- Аудио плеер -->
+                    <div class="audio-player-wrap" id="audioPlayerWrap" style="display:none">
+                        <audio id="audioPlayer" controls preload="none" style="width:100%"></audio>
+                        <div class="audio-hint">▶️ Кликните на реплику ниже чтобы прослушать этот фрагмент</div>
+                    </div>
+
+                    <!-- Участники -->
                     <div class="speakers-panel" id="speakersPanel" style="display:none">
                         <div class="speakers-header">
                             👥 Участники <span class="speakers-hint">— переименуйте спикеров в ФИО</span>
@@ -152,8 +158,26 @@
                         <button class="btn btn-primary btn-small" id="saveSpeakersBtn" style="margin-top:8px">💾 Сохранить имена</button>
                     </div>
 
-                    <div class="view-content">
-                        <pre id="viewText"></pre>
+                    <!-- Вкладки -->
+                    <div class="tabs-bar" id="tabsBar" style="display:none">
+                        <button class="tab-btn active" id="tabTranscript">📝 Транскрипция</button>
+                        <button class="tab-btn" id="tabSummary">📊 Резюме</button>
+                    </div>
+
+                    <!-- Транскрипция -->
+                    <div class="tab-content active" id="tabTranscriptContent">
+                        <div class="view-content" id="transcriptContent">
+                            <pre id="viewText"></pre>
+                        </div>
+                    </div>
+
+                    <!-- Резюме -->
+                    <div class="tab-content" id="tabSummaryContent" style="display:none">
+                        <div class="summary-actions" id="summaryActions">
+                            <button class="btn btn-primary" id="generateSummaryBtn">🤖 Сгенерировать резюме (LLM)</button>
+                            <span class="summary-hint" id="summaryHint">Требуется API ключ в настройках Amvera (LLM_API_KEY)</span>
+                        </div>
+                        <div class="summary-content markdown-body" id="summaryContent"></div>
                     </div>
                 </div>
 
