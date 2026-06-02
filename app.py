@@ -1,7 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Оффлайн транскрибатор видео для Amvera.
+Модель кэшируется в /app/data/models (Persistent Volume).
+"""
+
 import os
 import sys
 import uuid
-import json
 import sqlite3
 import threading
 import subprocess
@@ -18,15 +24,17 @@ app = Flask(__name__)
 DATA_DIR = Path("/app/data")
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
+MODELS_DIR = DATA_DIR / "models"
 DB_PATH = DATA_DIR / "jobs.db"
+
 MODEL_SIZE = "small"
 COMPUTE_TYPE = "int8"
 MAX_FILE_SIZE_MB = 100
 ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg"}
 
-# Создаём директории
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Инициализация БД ---
 def init_db():
@@ -47,10 +55,29 @@ def init_db():
 
 init_db()
 
-# --- Загрузка модели (глобально, один раз) ---
-print("⏳ Загрузка модели Whisper small...")
-model = WhisperModel(MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE, cpu_threads=2)
-print("✅ Модель загружена")
+# --- Ленивая загрузка модели (кэш в Persistent Volume) ---
+_model = None
+_model_lock = threading.Lock()
+
+def get_model():
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                print("⏳ Загрузка / скачивание модели Whisper small...")
+                print(f"   Кэш моделей: {MODELS_DIR}")
+                # local_files_only=False позволит скачать при первом запуске
+                # при последующих запусках возьмёт из кэша
+                _model = WhisperModel(
+                    MODEL_SIZE,
+                    device="cpu",
+                    compute_type=COMPUTE_TYPE,
+                    cpu_threads=2,
+                    download_root=str(MODELS_DIR),
+                    local_files_only=False
+                )
+                print("✅ Модель готова")
+    return _model
 
 # --- Утилиты ---
 def extract_audio(video_path: Path, wav_path: Path):
@@ -77,6 +104,8 @@ def process_job(job_id: str, video_path: Path):
                      ("processing", datetime.now().isoformat(), job_id))
         conn.commit()
 
+        model = get_model()
+
         with tempfile.TemporaryDirectory(dir=UPLOAD_DIR) as tmpdir:
             wav_path = Path(tmpdir) / "audio.wav"
             extract_audio(video_path, wav_path)
@@ -89,7 +118,6 @@ def process_job(job_id: str, video_path: Path):
                 vad_parameters=dict(min_silence_duration_ms=500)
             )
 
-            # Формируем результаты
             txt_lines = []
             srt_lines = []
             idx = 1
@@ -122,7 +150,6 @@ def process_job(job_id: str, video_path: Path):
         )
         conn.commit()
     finally:
-        # Удаляем исходное видео для экономии места
         if video_path.exists():
             video_path.unlink()
         conn.close()
@@ -149,12 +176,9 @@ def worker_loop():
                     conn.execute("UPDATE jobs SET status=?, error=? WHERE id=?",
                                  ("failed", "Файл не найден на диске", job_id))
                     conn.commit()
-            else:
-                pass
 
-        threading.Event().wait(5)  # проверяем очередь каждые 5 сек
+        threading.Event().wait(5)
 
-# Запускаем воркер в отдельном потоке
 threading.Thread(target=worker_loop, daemon=True).start()
 
 # --- API Endpoints ---
@@ -207,16 +231,16 @@ def status(job_id):
     if not row:
         return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
 
-    status, created, started, finished, error, txt, srt = row
+    status_val, created, started, finished, error, txt, srt = row
     result = {
         "job_id": job_id,
-        "status": status,
+        "status": status_val,
         "created_at": created,
         "started_at": started,
         "finished_at": finished,
         "error": error
     }
-    if status == "done":
+    if status_val == "done":
         result["files"] = {
             "txt": f"/api/download/{job_id}?format=txt",
             "srt": f"/api/download/{job_id}?format=srt"
