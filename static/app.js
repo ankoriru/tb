@@ -20,7 +20,8 @@
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
-    var MAX_FILE_SIZE_MB = 200; // загрузится с /api/health
+    var MAX_FILE_SIZE_MB = 200;
+    var editingSpeakers = false; // true когда пользователь редактирует спикеров // загрузится с /api/health
 
     function $(id) {
         var el = document.getElementById(id);
@@ -147,7 +148,10 @@
 
             if (j.status === 'done') {
                 currentSpeakers = j.speakers || {};
-                renderSpeakers(currentSpeakers);
+                // Не перерисовывать спикеров если пользователь их редактирует
+                if (!editingSpeakers) {
+                    renderSpeakers(currentSpeakers);
+                }
                 var sp = $('speakersPanel');
                 if (sp) sp.style.display = 'block';
 
@@ -201,6 +205,17 @@
             list.innerHTML = keys.map(function(num) {
                 return '<div class="speaker-row"><span class="speaker-label">Спикер ' + esc(num) + '</span><input type="text" data-spk="' + esc(num) + '" value="' + esc(speakers[num]) + '" placeholder="Введите ФИО или название"></div>';
             }).join('');
+            // Добавить обработчики focus/blur для остановки polling
+            list.querySelectorAll('input[data-spk]').forEach(function(inp) {
+                inp.addEventListener('focus', function() {
+                    editingSpeakers = true;
+                    console.log('[APP] editingSpeakers = true');
+                });
+                inp.addEventListener('blur', function() {
+                    editingSpeakers = false;
+                    console.log('[APP] editingSpeakers = false');
+                });
+            });
         }
     }
 
@@ -519,7 +534,8 @@
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(function() {
             loadJobs();
-            if (currentJobId && $('viewScreen') && $('viewScreen').style.display !== 'none') {
+            // Не обновлять view если пользователь редактирует спикеров
+            if (currentJobId && !editingSpeakers && $('viewScreen') && $('viewScreen').style.display !== 'none') {
                 openJob(currentJobId);
             }
         }, 5000);
