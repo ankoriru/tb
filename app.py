@@ -446,27 +446,42 @@ def delete_job(job_id):
 @app.route("/api/jobs", methods=["DELETE"])
 def delete_all_jobs():
     """Удалить все задачи и файлы текущего пользователя."""
+    import shutil
     uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, txt_path, srt_path FROM jobs WHERE user_id=?", (uid,)
+            "SELECT id, filename, txt_path, srt_path FROM jobs WHERE user_id=?", (uid,)
         ).fetchall()
-        for job_id, txt, srt in rows:
+        for job_id, filename, txt, srt in rows:
+            # удалить результаты
             for p in (txt, srt):
                 if p:
                     try: Path(p).unlink(missing_ok=True)
-                    except: pass
+                    except Exception: pass
+            # удалить исходный upload-файл по шаблону
+            if filename:
+                u_upload = UPLOAD_DIR / uid
+                for pattern in [f"{job_id}_{filename}", filename]:
+                    fp = u_upload / pattern
+                    if fp.exists():
+                        try: fp.unlink()
+                        except Exception: pass
             conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
         conn.execute("DELETE FROM jobs WHERE user_id=?", (uid,))
         conn.commit()
-    # очистить upload-директорию пользователя
-    u_upload, u_result = user_dirs(uid)
-    for f in u_upload.iterdir():
-        try: f.unlink(missing_ok=True)
-        except: pass
-    for f in u_result.iterdir():
-        try: f.unlink(missing_ok=True)
-        except: pass
+    # полная очистка директорий пользователя
+    u_upload = UPLOAD_DIR / uid
+    u_result = RESULT_DIR / uid
+    if u_upload.exists():
+        try: shutil.rmtree(str(u_upload))
+        except Exception: pass
+        try: u_upload.mkdir(parents=True, exist_ok=True)
+        except Exception: pass
+    if u_result.exists():
+        try: shutil.rmtree(str(u_result))
+        except Exception: pass
+        try: u_result.mkdir(parents=True, exist_ok=True)
+        except Exception: pass
     return jsonify({"status": "ok", "msg": "Все задачи и файлы удалены", "deleted_count": len(rows)})
 
 if __name__ == "__main__":
