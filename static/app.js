@@ -20,6 +20,7 @@
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
+    var MAX_FILE_SIZE_MB = 200; // загрузится с /api/health
 
     function $(id) {
         var el = document.getElementById(id);
@@ -229,6 +230,11 @@
 
     function uploadFile(file) {
         console.log('[APP] uploadFile', file.name, file.size);
+        var sizeMb = file.size / (1024 * 1024);
+        if (sizeMb > MAX_FILE_SIZE_MB) {
+            toast('Файл слишком большой (' + sizeMb.toFixed(1) + ' МБ). Максимум: ' + MAX_FILE_SIZE_MB + ' МБ. Разбейте на части или сожмите.', 'error');
+            return;
+        }
         var fd = new FormData();
         fd.append('file', file);
         var card = document.createElement('div');
@@ -463,6 +469,8 @@
     on('clearAllBtn', 'click', function() {
         console.log('[APP] clearAllBtn click');
         if (!confirm('⚠️ ВНИМАНИЕ\n\nВсе загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.\n\nПродолжить?')) return;
+        // Удалить все прогресс-карточки из DOM
+        document.querySelectorAll('.upload-progress').forEach(function(el) { el.remove(); });
         fetch(API + '/api/jobs', {
             method: 'DELETE',
             headers: { 'X-User-ID': USER_ID }
