@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 Оффлайн транскрибатор видео для Amvera.
-Модель кэшируется в /app/data/models (Persistent Volume).
+Все кэши пишутся в /app/data (Persistent Volume).
+Модель грузится лениво — только при первой задаче.
 """
 
 import os
@@ -12,11 +13,10 @@ import sqlite3
 import threading
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify, send_file
-
-from faster_whisper import WhisperModel
 
 app = Flask(__name__)
 
@@ -35,6 +35,22 @@ ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg"}
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Проверка Persistent Volume при старте ---
+def check_volume():
+    test_file = DATA_DIR / ".write_test"
+    try:
+        test_file.write_text("ok")
+        test_file.unlink()
+        print(f"✅ Persistent Volume {DATA_DIR} доступен для записи")
+        return True
+    except Exception as e:
+        print(f"❌ Persistent Volume {DATA_DIR} НЕ доступен: {e}")
+        return False
+
+if not check_volume():
+    # Не падаем сразу, но логируем. Amvera увидит в логах.
+    pass
 
 # --- Инициализация БД ---
 def init_db():
@@ -55,7 +71,7 @@ def init_db():
 
 init_db()
 
-# --- Ленивая загрузка модели (кэш в Persistent Volume) ---
+# --- Ленивая загрузка модели (только при первой задаче) ---
 _model = None
 _model_lock = threading.Lock()
 
@@ -64,10 +80,11 @@ def get_model():
     if _model is None:
         with _model_lock:
             if _model is None:
+                # Импорт здесь, чтобы не тратить время при старте контейнера
+                from faster_whisper import WhisperModel
                 print("⏳ Загрузка / скачивание модели Whisper small...")
-                print(f"   Кэш моделей: {MODELS_DIR}")
-                # local_files_only=False позволит скачать при первом запуске
-                # при последующих запусках возьмёт из кэша
+                print(f"   Кэш HF: {os.environ.get('HF_HOME')}")
+                print(f"   HOME: {os.environ.get('HOME')}")
                 _model = WhisperModel(
                     MODEL_SIZE,
                     device="cpu",
@@ -154,10 +171,13 @@ def process_job(job_id: str, video_path: Path):
             video_path.unlink()
         conn.close()
 
-# --- Фоновый воркер (1 задача одновременно) ---
+# --- Фоновый воркер (1 задача, стартует через 10 сек после импорта) ---
 worker_lock = threading.Lock()
 
 def worker_loop():
+    # Даём контейнеру время стабилизироваться и пройти healthcheck
+    time.sleep(10)
+    print("🔄 Worker запущен")
     while True:
         with worker_lock:
             with sqlite3.connect(DB_PATH) as conn:
@@ -177,11 +197,26 @@ def worker_loop():
                                  ("failed", "Файл не найден на диске", job_id))
                     conn.commit()
 
-        threading.Event().wait(5)
+        time.sleep(5)
 
+# Запускаем воркер в отдельном потоке с задержкой
 threading.Thread(target=worker_loop, daemon=True).start()
 
 # --- API Endpoints ---
+
+@app.route("/")
+def index():
+    """Корневой healthcheck для Amvera."""
+    return jsonify({
+        "status": "ok",
+        "service": "whisper-transcriber",
+        "model": MODEL_SIZE,
+        "volume_ready": check_volume()
+    })
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "model": MODEL_SIZE})
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
@@ -264,10 +299,6 @@ def download(job_id):
         return jsonify({"status": "error", "msg": "Файл удалён"}), 404
 
     return send_file(path, as_attachment=True)
-
-@app.route("/api/health")
-def health():
-    return jsonify({"status": "ok", "model": MODEL_SIZE})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
