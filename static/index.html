@@ -9,7 +9,6 @@
 </head>
 <body>
     <div class="app">
-        <!-- Шапка -->
         <header class="header">
             <div class="header-left">
                 <button class="menu-btn" id="menuToggle">☰</button>
@@ -31,7 +30,6 @@
         </header>
 
         <div class="main">
-            <!-- Левая панель -->
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <h2>Запись</h2>
@@ -45,17 +43,14 @@
                         </button>
                     </div>
                 </div>
-
                 <div class="search-box" id="searchBox" style="display:none">
                     <input type="text" id="searchInput" placeholder="Поиск записей...">
                 </div>
-
                 <div class="sidebar-filters">
                     <button class="filter-btn active" id="filterAll">Все</button>
                     <button class="filter-btn" id="filterDone">Готово</button>
                     <button class="filter-btn" id="filterProcessing">В работе</button>
                 </div>
-
                 <div class="records-list" id="recordsList">
                     <div class="empty-state">
                         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -64,7 +59,6 @@
                 </div>
             </aside>
 
-            <!-- Правая панель -->
             <main class="content" id="content">
                 <!-- Экран загрузки -->
                 <div class="upload-screen" id="uploadScreen">
@@ -73,7 +67,6 @@
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mic-icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
                             <h2>Загрузка аудио</h2>
                         </div>
-
                         <div class="drop-zone" id="dropZone">
                             <input type="file" id="fileInput" accept="video/*,audio/*" multiple hidden>
                             <div class="drop-content">
@@ -82,9 +75,7 @@
                                 <span class="formats">Поддерживаются форматы MP3, WAV, M4A, MP4, MOV, AVI, MKV и другие</span>
                             </div>
                         </div>
-
                         <div class="divider"><span>или</span></div>
-
                         <div class="record-section">
                             <h3>Аудиозапись</h3>
                             <div class="record-buttons">
@@ -114,7 +105,6 @@
                                 <button class="btn btn-danger" id="stopRecBtn">⏹ Остановить запись</button>
                             </div>
                         </div>
-
                         <div class="tags-section">
                             <div class="tags-header">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"></path><path d="M7 7h.01"></path></svg>
@@ -124,7 +114,6 @@
                                 <input type="text" id="tagsInput" placeholder="Теги ещё не созданы. Создайте теги">
                             </div>
                         </div>
-
                         <div class="params-section">
                             <button class="params-toggle" id="paramsToggle">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
@@ -172,6 +161,18 @@
                     </div>
                     <div class="view-meta" id="viewMeta"></div>
                     <div class="view-status-badge" id="viewStatus"></div>
+
+                    <!-- Участники / Спикеры -->
+                    <div class="speakers-panel" id="speakersPanel" style="display:none">
+                        <div class="speakers-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                            <span>Участники</span>
+                            <span class="speakers-hint">— можно переименовать спикеров в ФИО</span>
+                        </div>
+                        <div class="speakers-list" id="speakersList"></div>
+                        <button class="btn btn-primary btn-small" id="saveSpeakersBtn" style="margin-top:8px">💾 Сохранить имена</button>
+                    </div>
+
                     <div class="view-content">
                         <pre id="viewText"></pre>
                     </div>
@@ -179,10 +180,7 @@
             </main>
         </div>
     </div>
-
-    <!-- Toast уведомления -->
     <div class="toast-container" id="toastContainer"></div>
-
     <script src="/static/app.js"></script>
 </body>
 </html>
