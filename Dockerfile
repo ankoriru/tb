@@ -27,5 +27,5 @@ COPY app.py .
 COPY static/ ./static/
 
 CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", \
-     "--workers", "1", "--threads", "4", "--timeout", "600", \
+     "--workers", "1", "--threads", "4", "--timeout", "300", \
      "--preload"]
