@@ -1,0 +1,18 @@
+meta:
+  name: whisper-transcriber
+  version: 1.0.0
+  runtime: python3.11
+
+build:
+  dockerfile: Dockerfile
+
+run:
+  command: gunicorn app:app -b 0.0.0.0:8080 --workers 1 --threads 4 --timeout 120
+
+resources:
+  memory: 4096Mi   # 4 ГБ — обязательно для small
+  cpu: 2000m       # 2 vCPU минимум, лучше 4000m
+
+storage:
+  - path: /app/data
+    size: 5Gi      # На видео + результаты + SQLite
