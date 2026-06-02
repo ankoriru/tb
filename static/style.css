@@ -276,3 +276,50 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
     .sidebar { position: absolute; z-index: 50; height: 100%; }
     .record-buttons { flex-direction: column; }
 }
+
+/* Панель спикеров */
+.speakers-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+}
+.speakers-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+}
+.speakers-header svg { color: var(--primary); }
+.speakers-hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+.speakers-list { display: flex; flex-direction: column; gap: 8px; }
+.speaker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.speaker-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 80px;
+}
+.speaker-row input {
+    flex: 1;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    background: var(--bg);
+    outline: none;
+}
+.speaker-row input:focus { border-color: var(--primary); }
