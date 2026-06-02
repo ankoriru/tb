@@ -27,7 +27,9 @@ RUN mkdir -p /app/data/uploads /app/data/results /app/data/models \
     /app/data/hf_cache /app/data/cache /app/data/home/.cache
 VOLUME ["/app/data"]
 
-COPY . .
+# Копируем код и статику
+COPY app.py .
+COPY static/ ./static/
 
 # Gunicorn: таймаут 120 сек, 1 воркер (мало RAM), 4 потока для API
 CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8080", \
