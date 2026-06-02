@@ -17,9 +17,7 @@
                 </div>
             </div>
             <div class="header-right">
-                <button class="btn btn-primary" id="newRecordBtn">
-                    ➕ Новая запись
-                </button>
+                <button class="btn btn-primary" id="newRecordBtn">➕ Новая запись</button>
             </div>
         </header>
 
@@ -62,19 +60,20 @@
                             <h2>Загрузка аудио или видео</h2>
                         </div>
 
+                        <!-- Drop zone с overlay input -->
                         <div class="drop-zone" id="dropZone">
-                            <input type="file" id="fileInput" accept="video/*,audio/*" multiple style="display:none">
+                            <input type="file" id="fileInput" accept="video/*,audio/*" multiple>
                             <div class="drop-content">
                                 <div style="font-size:40px">📤</div>
-                                <p>Перетащите аудио/видео файлы сюда или нажмите для выбора</p>
-                                <span class="formats">Поддерживаются форматы MP3, WAV, M4A, MP4, MOV, AVI, MKV и другие</span>
+                                <p><strong>Нажмите</strong> для выбора файла или <strong>перетащите</strong> сюда</p>
+                                <span class="formats">MP3, WAV, M4A, MP4, MOV, AVI, MKV</span>
                             </div>
                         </div>
 
                         <div class="divider"><span>или</span></div>
 
                         <div class="record-section">
-                            <h3>Аудиозапись</h3>
+                            <h3>🎙️ Аудиозапись</h3>
                             <div class="record-buttons">
                                 <button class="record-btn record-mic" id="recordMicBtn">🎤 Микрофон</button>
                                 <button class="record-btn record-system" id="recordSystemBtn">🖥️ Системный звук</button>
@@ -82,22 +81,22 @@
                             </div>
                             <div class="record-hints">
                                 <p><strong>Микрофон:</strong> Записывает только ваш голос</p>
-                                <p><strong>Системный звук:</strong> Записывает участников встречи и системные звуки</p>
-                                <p><strong>Микрофон + система:</strong> Записывает ваш голос + участников встречи (рекомендуется для онлайн-встреч)</p>
+                                <p><strong>Системный звук:</strong> Записывает участников встречи</p>
+                                <p><strong>Микрофон + система:</strong> Рекомендуется для онлайн-встреч</p>
                             </div>
                             <div class="recorder-status" id="recorderStatus" style="display:none">
                                 <div class="recorder-wave">
                                     <span class="rec-dot"></span>
                                     <span class="rec-time" id="recTime">00:00</span>
                                 </div>
-                                <button class="btn btn-danger" id="stopRecBtn">⏹ Остановить запись</button>
+                                <button class="btn btn-danger" id="stopRecBtn">⏹ Остановить</button>
                             </div>
                         </div>
 
                         <div class="tags-section">
                             <div class="tags-header">🏷️ Теги</div>
                             <div class="tags-input-wrap">
-                                <input type="text" id="tagsInput" placeholder="Теги ещё не созданы. Создайте теги">
+                                <input type="text" id="tagsInput" placeholder="Введите теги через запятую">
                             </div>
                         </div>
 
@@ -110,7 +109,7 @@
                                 <div class="param-row">
                                     <label>Модель Whisper</label>
                                     <select id="modelSelect">
-                                        <option value="tiny">tiny (быстро, базовое качество)</option>
+                                        <option value="tiny">tiny (быстро)</option>
                                         <option value="base">base</option>
                                         <option value="small" selected>small (рекомендуется)</option>
                                     </select>
@@ -122,13 +121,6 @@
                                         <option value="en">English</option>
                                         <option value="auto">Автоопределение</option>
                                     </select>
-                                </div>
-                                <div class="param-row">
-                                    <label>Формат вывода</label>
-                                    <div class="checkbox-group">
-                                        <label><input type="checkbox" id="outTxt" checked> Текст (.txt)</label>
-                                        <label><input type="checkbox" id="outSrt" checked> Субтитры (.srt)</label>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -150,7 +142,7 @@
 
                     <div class="speakers-panel" id="speakersPanel" style="display:none">
                         <div class="speakers-header">
-                            👥 Участники <span class="speakers-hint">— можно переименовать спикеров в ФИО</span>
+                            👥 Участники <span class="speakers-hint">— переименуйте спикеров в ФИО</span>
                         </div>
                         <div class="speakers-list" id="speakersList"></div>
                         <button class="btn btn-primary btn-small" id="saveSpeakersBtn" style="margin-top:8px">💾 Сохранить имена</button>
