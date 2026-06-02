@@ -1,5 +1,4 @@
 (function(){
-    // --- User ID ---
     let USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
         USER_ID = 'u-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36).slice(-4);
@@ -9,12 +8,12 @@
     const API = '';
     let pollTimer = null;
     let currentJobId = null;
+    let currentSpeakers = {}; // {1: "Спикер 1", 2: "Иванов"}
     let mediaRecorder = null;
     let recChunks = [];
     let recStartTime = 0;
     let recTimerInterval = null;
 
-    // DOM refs
     const els = {
         recordsList: document.getElementById('recordsList'),
         dropZone: document.getElementById('dropZone'),
@@ -24,6 +23,9 @@
         viewMeta: document.getElementById('viewMeta'),
         viewStatus: document.getElementById('viewStatus'),
         viewText: document.getElementById('viewText'),
+        speakersPanel: document.getElementById('speakersPanel'),
+        speakersList: document.getElementById('speakersList'),
+        saveSpeakersBtn: document.getElementById('saveSpeakersBtn'),
         backBtn: document.getElementById('backBtn'),
         deleteJobBtn: document.getElementById('deleteJobBtn'),
         downloadTxtBtn: document.getElementById('downloadTxtBtn'),
@@ -51,7 +53,6 @@
 
     let activeFilter = 'all';
 
-    // --- Toast ---
     function toast(msg, type='info') {
         const el = document.createElement('div');
         el.className = 'toast ' + type;
@@ -60,15 +61,6 @@
         setTimeout(() => el.remove(), 4000);
     }
 
-    // --- API helpers ---
-    function apiOpts(body) {
-        const opts = { headers: { 'X-User-ID': USER_ID } };
-        if (body) {
-            opts.method = 'POST';
-            opts.body = body;
-        }
-        return opts;
-    }
     async function apiGet(path) {
         const r = await fetch(API + path, { headers: { 'X-User-ID': USER_ID } });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
@@ -79,13 +71,21 @@
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.json();
     }
+    async function apiPostJson(path, body) {
+        const r = await fetch(API + path, {
+            method: 'POST',
+            headers: { 'X-User-ID': USER_ID, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        return r.json();
+    }
     async function apiDelete(path) {
         const r = await fetch(API + path, { method: 'DELETE', headers: { 'X-User-ID': USER_ID } });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.json();
     }
 
-    // --- Jobs list ---
     async function loadJobs() {
         try {
             const data = await apiGet('/api/jobs');
@@ -147,7 +147,6 @@
         return d.innerHTML;
     }
 
-    // --- Open job view ---
     async function openJob(id) {
         currentJobId = id;
         try {
@@ -160,6 +159,9 @@
             els.viewStatus.innerHTML = `<span class="${stClass}">${stText}</span>`;
 
             if (j.status === 'done') {
+                currentSpeakers = j.speakers || {};
+                renderSpeakers(currentSpeakers);
+                els.speakersPanel.style.display = 'block';
                 try {
                     const txt = await fetch(API + '/api/download/' + id + '?format=txt', { headers: { 'X-User-ID': USER_ID } }).then(r => r.text());
                     els.viewText.textContent = txt;
@@ -170,10 +172,12 @@
                 els.downloadSrtBtn.style.display = '';
             } else if (j.error) {
                 els.viewText.textContent = 'Ошибка: ' + j.error;
+                els.speakersPanel.style.display = 'none';
                 els.downloadTxtBtn.style.display = 'none';
                 els.downloadSrtBtn.style.display = 'none';
             } else {
                 els.viewText.textContent = 'Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.';
+                els.speakersPanel.style.display = 'none';
                 els.downloadTxtBtn.style.display = 'none';
                 els.downloadSrtBtn.style.display = 'none';
             }
@@ -183,14 +187,44 @@
         }
     }
 
+    function renderSpeakers(speakers) {
+        if (!speakers || Object.keys(speakers).length === 0) {
+            els.speakersList.innerHTML = '<p style="font-size:13px;color:var(--text-secondary)">Спикеры не определены</p>';
+            return;
+        }
+        els.speakersList.innerHTML = Object.entries(speakers).map(([num, name]) => `
+            <div class="speaker-row">
+                <span class="speaker-label">Спикер ${esc(num)}</span>
+                <input type="text" data-spk="${esc(num)}" value="${esc(name)}" placeholder="Введите ФИО или название">
+            </div>
+        `).join('');
+    }
+
+    async function saveSpeakers() {
+        if (!currentJobId) return;
+        const inputs = els.speakersList.querySelectorAll('input[data-spk]');
+        const names = {};
+        inputs.forEach(inp => { names[inp.dataset.spk] = inp.value; });
+        try {
+            await apiPostJson('/api/jobs/' + currentJobId + '/speakers', { names });
+            toast('Имена участников сохранены', 'success');
+            // перезагрузим текст с новыми именами
+            openJob(currentJobId);
+        } catch(e) {
+            toast('Ошибка сохранения: ' + e.message, 'error');
+        }
+    }
+
+    els.saveSpeakersBtn.addEventListener('click', saveSpeakers);
+
     function showUpload() {
         currentJobId = null;
+        currentSpeakers = {};
         els.viewScreen.style.display = 'none';
         els.uploadScreen.style.display = 'block';
         loadJobs();
     }
 
-    // --- Upload file ---
     async function uploadFile(file) {
         const fd = new FormData();
         fd.append('file', file);
@@ -225,7 +259,6 @@
     });
     els.fileInput.addEventListener('change', () => Array.from(els.fileInput.files).forEach(uploadFile));
 
-    // --- Recording ---
     function formatRecTime(ms) {
         const s = Math.floor(ms / 1000);
         const m = Math.floor(s / 60);
@@ -306,7 +339,6 @@
     });
     els.stopRecBtn.addEventListener('click', () => { if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop(); });
 
-    // --- Filters ---
     function setFilter(f) {
         activeFilter = f;
         [els.filterAll, els.filterDone, els.filterProcessing].forEach(b => b.classList.remove('active'));
@@ -319,20 +351,17 @@
     els.filterDone.addEventListener('click', () => setFilter('done'));
     els.filterProcessing.addEventListener('click', () => setFilter('processing'));
 
-    // --- Search ---
     els.searchToggle.addEventListener('click', () => {
         const vis = els.searchBox.style.display !== 'none';
         els.searchBox.style.display = vis ? 'none' : 'block';
     });
     els.searchInput.addEventListener('input', () => loadJobs());
 
-    // --- Navigation ---
     els.backBtn.addEventListener('click', showUpload);
     els.newRecordBtn.addEventListener('click', showUpload);
     els.sidebarNewBtn.addEventListener('click', showUpload);
     els.menuToggle.addEventListener('click', () => els.sidebar.classList.toggle('collapsed'));
 
-    // --- Delete ---
     els.deleteJobBtn.addEventListener('click', async () => {
         if (!currentJobId) return;
         if (!confirm('Удалить задачу ' + currentJobId + '?')) return;
@@ -345,7 +374,6 @@
         }
     });
 
-    // --- Downloads ---
     els.downloadTxtBtn.addEventListener('click', () => {
         if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt', '_blank');
     });
@@ -353,14 +381,12 @@
         if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=srt', '_blank');
     });
 
-    // --- Params toggle ---
     els.paramsToggle.addEventListener('click', () => {
         const open = els.paramsBody.style.display !== 'none';
         els.paramsBody.style.display = open ? 'none' : 'block';
         els.paramsToggle.classList.toggle('open', !open);
     });
 
-    // --- Polling ---
     function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(() => {
@@ -369,7 +395,6 @@
         }, 5000);
     }
 
-    // --- Init ---
     loadJobs();
     startPolling();
 })();
