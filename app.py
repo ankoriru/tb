@@ -8,6 +8,8 @@
 - Переименование спикеров после обработки
 - Аудио-плеер по клику на реплику
 - Резюме через LLM (OpenAI-совместимый API)
+- Чат с транскрипцией / резюме
+- Редактирование и скачивание Word
 """
 
 import os
@@ -94,6 +96,15 @@ def init_db():
                 PRIMARY KEY (job_id, speaker_num)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT
+            )
+        """)
         # Миграции
         for col in ['audio_path', 'summary_path']:
             try:
@@ -102,6 +113,7 @@ def init_db():
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_job ON chat_messages(job_id)")
         conn.commit()
 
 init_db()
@@ -126,6 +138,7 @@ def cleanup_old_files():
                 except: pass
         conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
         conn.execute("DELETE FROM speakers WHERE job_id NOT IN (SELECT id FROM jobs)")
+        conn.execute("DELETE FROM chat_messages WHERE job_id NOT IN (SELECT id FROM jobs)")
         conn.commit()
     print(f"🧹 Ротация выполнена. Удалены записи старше {RETENTION_HOURS}ч.")
 
@@ -335,6 +348,24 @@ def health():
         "llm_configured": bool(LLM_API_KEY)
     })
 
+@app.route("/api/models")
+def list_models():
+    if not LLM_API_KEY:
+        return jsonify({"models": [], "msg": "LLM API ключ не настроен"}), 503
+    try:
+        import requests as req
+        # OpenAI-compatible endpoint: заменяем /v1/chat/completions -> /v1/models
+        base_url = LLM_API_URL.replace("/v1/chat/completions", "/v1").replace("/chat/completions", "")
+        if not base_url.endswith("/v1"):
+            base_url = base_url + "/v1"
+        r = req.get(f"{base_url}/models", headers={"Authorization": f"Bearer {LLM_API_KEY}"}, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        models = [m["id"] for m in data.get("data", []) if "id" in m]
+        return jsonify({"models": models, "default": models[0] if models else LLM_MODEL})
+    except Exception as e:
+        return jsonify({"models": [], "error": str(e), "default": LLM_MODEL}), 500
+
 @app.route("/api/jobs")
 def list_jobs():
     uid = get_user_id()
@@ -387,27 +418,27 @@ def status(job_id):
             "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path, audio_path, speakers_json, summary_path FROM jobs WHERE id=? AND user_id=?",
             (job_id, uid)
         ).fetchone()
-    if not row:
-        return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
-    d = dict(row)
-    result = {
-        "job_id": job_id, "status": d["status"],
-        "created_at": d["created_at"], "started_at": d["started_at"],
-        "finished_at": d["finished_at"], "error": d["error"],
-        "speakers_json": d["speakers_json"] if d["speakers_json"] else None,
-        "llm_configured": bool(LLM_API_KEY)
-    }
-    if d["status"] == "done":
-        result["files"] = {
-            "txt": f"/api/download/{job_id}?format=txt",
-            "srt": f"/api/download/{job_id}?format=srt",
-            "audio": f"/api/audio/{job_id}"
+        if not row:
+            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+        d = dict(row)
+        result = {
+            "job_id": job_id, "status": d["status"],
+            "created_at": d["created_at"], "started_at": d["started_at"],
+            "finished_at": d["finished_at"], "error": d["error"],
+            "speakers_json": d["speakers_json"] if d["speakers_json"] else None,
+            "llm_configured": bool(LLM_API_KEY)
         }
-        if d["summary_path"] and Path(d["summary_path"]).exists():
-            result["summary_ready"] = True
-            result["summary"] = Path(d["summary_path"]).read_text(encoding="utf-8")
-        spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
-        result["speakers"] = {str(num): name for num, name in spk_rows}
+        if d["status"] == "done":
+            result["files"] = {
+                "txt": f"/api/download/{job_id}?format=txt",
+                "srt": f"/api/download/{job_id}?format=srt",
+                "audio": f"/api/audio/{job_id}"
+            }
+            if d["summary_path"] and Path(d["summary_path"]).exists():
+                result["summary_ready"] = True
+                result["summary"] = Path(d["summary_path"]).read_text(encoding="utf-8")
+            spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
+            result["speakers"] = {str(num): name for num, name in spk_rows}
     return jsonify(result)
 
 @app.route("/api/audio/<job_id>")
@@ -464,11 +495,44 @@ def download(job_id):
         return jsonify({"status": "error", "msg": "Файл удалён"}), 404
     return send_file(path, as_attachment=True)
 
+@app.route("/api/jobs/<job_id>/content", methods=["PATCH"])
+def update_content(job_id):
+    uid = get_user_id()
+    data = request.get_json(force=True, silent=True) or {}
+    content_type = data.get("type")
+    text = data.get("text", "")
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT txt_path, summary_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
+        if not row:
+            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+    if content_type == "txt":
+        path = Path(row[0])
+        if path.exists():
+            path.write_text(text, encoding="utf-8")
+            return jsonify({"status": "ok"})
+    elif content_type == "summary":
+        summary_path = Path(row[1]) if row[1] else None
+        if summary_path and summary_path.exists():
+            summary_path.write_text(text, encoding="utf-8")
+            return jsonify({"status": "ok"})
+        else:
+            _, u_result = user_dirs(uid)
+            summary_file = u_result / f"{job_id}_summary.md"
+            summary_file.write_text(text, encoding="utf-8")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute("UPDATE jobs SET summary_path=? WHERE id=? AND user_id=?", (str(summary_file), job_id, uid))
+                conn.commit()
+            return jsonify({"status": "ok"})
+    return jsonify({"status": "error", "msg": "Неверный тип"}), 400
+
 @app.route("/api/jobs/<job_id>/summary", methods=["POST"])
 def generate_summary(job_id):
     uid = get_user_id()
     if not LLM_API_KEY:
         return jsonify({"status": "error", "msg": "LLM API ключ не настроен. Добавьте переменную окружения LLM_API_KEY в настройках Amvera."}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    model = data.get("model", LLM_MODEL)
 
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
@@ -522,7 +586,7 @@ def generate_summary(job_id):
             "Authorization": f"Bearer {LLM_API_KEY}",
             "Content-Type": "application/json"
         }, json={
-            "model": LLM_MODEL,
+            "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
             "max_tokens": 4000
@@ -544,6 +608,71 @@ def generate_summary(job_id):
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500
 
+@app.route("/api/jobs/<job_id>/chat", methods=["GET", "POST"])
+def chat(job_id):
+    uid = get_user_id()
+    if not LLM_API_KEY:
+        return jsonify({"status": "error", "msg": "LLM не настроен"}), 503
+
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT txt_path, summary_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
+        if not row:
+            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+
+    if request.method == "GET":
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT role, content, created_at FROM chat_messages WHERE job_id=? ORDER BY id", (job_id,)).fetchall()
+            messages = [dict(r) for r in rows]
+        return jsonify({"messages": messages})
+
+    data = request.get_json(force=True, silent=True) or {}
+    user_msg = data.get("message", "").strip()
+    model = data.get("model", LLM_MODEL)
+    if not user_msg:
+        return jsonify({"status": "error", "msg": "Пустое сообщение"}), 400
+
+    txt_path = Path(row[0]) if row[0] else None
+    summary_path = Path(row[1]) if row[1] else None
+    transcript = txt_path.read_text(encoding="utf-8") if txt_path and txt_path.exists() else ""
+    summary = summary_path.read_text(encoding="utf-8") if summary_path and summary_path.exists() else ""
+
+    with sqlite3.connect(DB_PATH) as conn:
+        hist_rows = conn.execute("SELECT role, content FROM chat_messages WHERE job_id=? ORDER BY id LIMIT 20", (job_id,)).fetchall()
+
+    messages = []
+    system_prompt = f"""Ты помощник для работы с расшифровкой совещания. У тебя есть полная транскрипция и резюме совещания. Отвечай на русском языке кратко и по делу. Если пользователь просит что-то изменить в резюме — опиши, какие правки нужно внести, но не говори что не можешь редактировать файлы (пользователь сам внесёт правки через интерфейс).\n\nРезюме совещания:\n{summary[:4000]}\n\nТранскрипция (начало):\n{transcript[:6000]}"""
+    messages.append({"role": "system", "content": system_prompt})
+    for role, content in hist_rows:
+        messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_msg})
+
+    try:
+        import requests as req
+        r = req.post(LLM_API_URL, headers={
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "Content-Type": "application/json"
+        }, json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0.5,
+            "max_tokens": 2000
+        }, timeout=120)
+        r.raise_for_status()
+        assistant_msg = r.json()["choices"][0]["message"]["content"]
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                         (job_id, "user", user_msg, now))
+            conn.execute("INSERT INTO chat_messages (job_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                         (job_id, "assistant", assistant_msg, now))
+            conn.commit()
+
+        return jsonify({"status": "ok", "message": assistant_msg})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
+
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
     uid = get_user_id()
@@ -556,6 +685,7 @@ def delete_job(job_id):
                     except: pass
         cur = conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, uid))
         conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM chat_messages WHERE job_id=?", (job_id,))
         conn.commit()
         if cur.rowcount == 0:
             return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
@@ -575,6 +705,7 @@ def delete_all_jobs():
                     try: Path(p).unlink(missing_ok=True)
                     except: pass
             conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
+            conn.execute("DELETE FROM chat_messages WHERE job_id=?", (job_id,))
         conn.execute("DELETE FROM jobs WHERE user_id=?", (uid,))
         conn.commit()
     u_upload = UPLOAD_DIR / uid
