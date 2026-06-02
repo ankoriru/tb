@@ -162,7 +162,6 @@
                 select.innerHTML = data.models.map(function(m) {
                     return '<option value="' + esc(m) + '">' + esc(m) + '</option>';
                 }).join('');
-                // Восстановить сохранённую или выбрать первую
                 var saved = localStorage.getItem('llm_model');
                 if (saved && data.models.indexOf(saved) !== -1) {
                     select.value = saved;
@@ -173,21 +172,27 @@
                 select.addEventListener('change', function() {
                     localStorage.setItem('llm_model', select.value);
                 });
+                if (data.fallback) {
+                    console.log('[APP] LLM models fallback used:', data.error);
+                }
             } else {
-                if (hint) hint.textContent = data.error || 'Модели не загружены';
+                if (hint) hint.textContent = data.msg || data.error || 'Модели не загружены';
             }
         }).catch(function(e) {
             var row = $('llmModelRow');
             var hint = $('llmModelHint');
             if (row) row.style.display = '';
-            if (hint) hint.textContent = 'LLM не настроен';
+            if (hint) hint.textContent = 'LLM не настроен (проверьте LLM_API_KEY)';
+            console.error('[APP] loadModels error:', e);
         });
     }
 
     function getSelectedModel() {
         var sel = $('llmModelSelect');
         if (sel && sel.value) return sel.value;
-        return localStorage.getItem('llm_model') || '';
+        var saved = localStorage.getItem('llm_model');
+        if (saved) return saved;
+        return '';
     }
 
     // --- View job ---
@@ -486,14 +491,15 @@
         if (!currentJobId) return;
         var btn = $('generateSummaryBtn');
         var content = $('summaryContent');
+        var model = getSelectedModel();
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Генерация...';
         }
-        if (content) content.innerHTML = '<div style="text-align:center;padding:40px"><span class="spinner"></span><p>Анализируем транскрипцию через LLM...</p><p style="font-size:12px;color:var(--text-secondary)">Это может занять 30–60 секунд</p></div>';
+        if (content) content.innerHTML = '<div style="text-align:center;padding:40px"><span class="spinner"></span><p>Анализируем транскрипцию через LLM...</p><p style="font-size:12px;color:var(--text-secondary)">Модель: ' + esc(model || 'default') + '</p></div>';
 
         apiPostJson('/api/jobs/' + currentJobId + '/summary', {
-            model: getSelectedModel()
+            model: model
         }).then(function(data) {
             if (data.summary) {
                 if (content) content.innerHTML = markdownToHtml(data.summary);
@@ -501,15 +507,15 @@
                 if (actions) actions.style.display = 'none';
                 toast('Резюме сгенерировано', 'success');
             } else {
-                if (content) content.innerHTML = '<p>Ошибка: ' + esc(data.msg) + '</p>';
-                toast('Ошибка генерации: ' + data.msg, 'error');
+                if (content) content.innerHTML = '<p>Ошибка: ' + esc(data.msg || 'Неизвестная ошибка') + '</p>';
+                toast('Ошибка генерации: ' + (data.msg || ''), 'error');
             }
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = '🤖 Сгенерировать резюме (LLM)';
             }
         }).catch(function(e) {
-            if (content) content.innerHTML = '<p>Ошибка: ' + esc(e.message) + '</p>';
+            if (content) content.innerHTML = '<p>Ошибка сети: ' + esc(e.message) + '</p><p style="font-size:12px;color:var(--text-secondary)">Проверьте LLM_API_KEY и LLM_API_URL в настройках Amvera.</p>';
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = '🤖 Сгенерировать резюме (LLM)';
