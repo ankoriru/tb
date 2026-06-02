@@ -20,7 +20,7 @@
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
-    var MAX_FILE_SIZE_MB = 200; // загрузится с /api/health
+    var MAX_FILE_SIZE_MB = 700; // загрузится с /api/health
 
     function $(id) {
         var el = document.getElementById(id);
