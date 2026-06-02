@@ -162,14 +162,35 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
 }
 .upload-header h2 { font-size: 18px; font-weight: 700; }
 
+/* Drop zone — input overlay */
 .drop-zone {
+    position: relative;
     border: 2px dashed var(--border); border-radius: 10px; padding: 32px;
     text-align: center; cursor: pointer; transition: all .2s; background: var(--bg);
+    overflow: hidden;
 }
-.drop-zone.dragover { border-color: var(--primary); background: #f0fdfa; }
-.drop-content { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-secondary); }
+.drop-zone:hover { border-color: var(--primary); background: #f0fdfa; }
+.drop-zone.dragover { border-color: var(--primary); background: #e0f7fa; }
+
+/* Input file — невидимый overlay поверх всей зоны */
+.drop-zone input[type="file"] {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%; height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 10;
+}
+
+.drop-content {
+    position: relative;
+    z-index: 5;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    color: var(--text-secondary); pointer-events: none;
+}
 .drop-content div { font-size: 40px; }
 .drop-content p { font-size: 14px; color: var(--text); }
+.drop-content p strong { color: var(--primary); }
 .formats { font-size: 12px; color: var(--text-secondary); }
 
 .divider {
