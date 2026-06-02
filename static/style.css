@@ -323,3 +323,40 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
     outline: none;
 }
 .speaker-row input:focus { border-color: var(--primary); }
+
+/* Баннер сессии */
+.session-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: #e8f5e9;
+    border-bottom: 1px solid #c8e6c9;
+    color: #2e7d32;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+.session-banner svg {
+    flex-shrink: 0;
+    stroke: #2e7d32;
+}
+.session-banner strong {
+    color: #1b5e20;
+}
+.banner-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    color: #2e7d32;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+}
+.banner-close:hover {
+    background: #c8e6c9;
+}
