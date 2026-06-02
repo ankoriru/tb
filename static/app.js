@@ -462,11 +462,7 @@
 
     on('clearAllBtn', 'click', function() {
         console.log('[APP] clearAllBtn click');
-        if (!confirm('⚠️ ВНИМАНИЕ
-
-Все загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.
-
-Продолжить?')) return;
+        if (!confirm('⚠️ ВНИМАНИЕ\n\nВсе загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.\n\nПродолжить?')) return;
         fetch(API + '/api/jobs', {
             method: 'DELETE',
             headers: { 'X-User-ID': USER_ID }
