@@ -1,8 +1,7 @@
 (function(){
     'use strict';
-    console.log('[APP] Script loaded');
+    console.log('[APP] Script loaded v2');
 
-    // --- User ID ---
     var USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
         USER_ID = 'u-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36).slice(-4);
@@ -22,7 +21,6 @@
     var recTimerInterval = null;
     var activeFilter = 'all';
 
-    // --- DOM helpers ---
     function $(id) {
         var el = document.getElementById(id);
         if (!el) console.warn('[APP] Element not found: #' + id);
@@ -37,7 +35,6 @@
         }
     }
 
-    // --- Toast ---
     function toast(msg, type) {
         type = type || 'info';
         var el = document.createElement('div');
@@ -48,7 +45,6 @@
         setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 4000);
     }
 
-    // --- API ---
     function apiGet(path) {
         return fetch(API + path, { headers: { 'X-User-ID': USER_ID } }).then(function(r) {
             if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
@@ -78,7 +74,6 @@
         });
     }
 
-    // --- Jobs ---
     function loadJobs() {
         console.log('[APP] loadJobs');
         apiGet('/api/jobs').then(function(data) {
@@ -133,7 +128,6 @@
         }
     }
 
-    // --- View job ---
     function openJob(id) {
         console.log('[APP] openJob', id);
         currentJobId = id;
@@ -233,14 +227,13 @@
         loadJobs();
     }
 
-    // --- Upload ---
     function uploadFile(file) {
-        console.log('[APP] uploadFile', file.name);
+        console.log('[APP] uploadFile', file.name, file.size);
         var fd = new FormData();
         fd.append('file', file);
         var card = document.createElement('div');
         card.className = 'upload-progress';
-        card.innerHTML = '<div class="upload-progress-file">' + esc(file.name) + '</div><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-status">Загрузка...</div>';
+        card.innerHTML = '<div class="upload-progress-file">' + esc(file.name) + ' (' + (file.size/1024/1024).toFixed(1) + ' МБ)</div><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-status">Загрузка...</div>';
         var zone = $('dropZone');
         if (zone && zone.parentNode) zone.parentNode.insertBefore(card, zone.nextSibling);
 
@@ -260,7 +253,6 @@
         });
     }
 
-    // --- Recording ---
     function formatRecTime(ms) {
         var s = Math.floor(ms / 1000);
         var m = Math.floor(s / 60);
@@ -351,7 +343,6 @@
         });
     }
 
-    // --- Filters ---
     function setFilter(f) {
         activeFilter = f;
         ['filterAll','filterDone','filterProcessing'].forEach(function(id) {
@@ -367,35 +358,32 @@
     // === EVENT BINDINGS ===
     console.log('[APP] Binding events...');
 
-    on('dropZone', 'click', function() {
-        console.log('[APP] dropZone click');
-        var inp = $('fileInput');
-        if (inp) inp.click();
-    });
-
+    // Drag & Drop (на dropZone, не на input)
     on('dropZone', 'dragover', function(e) {
         e.preventDefault();
         var dz = $('dropZone');
         if (dz) dz.classList.add('dragover');
     });
-
     on('dropZone', 'dragleave', function() {
         var dz = $('dropZone');
         if (dz) dz.classList.remove('dragover');
     });
-
     on('dropZone', 'drop', function(e) {
         e.preventDefault();
-        console.log('[APP] dropZone drop');
+        console.log('[APP] dropZone drop', e.dataTransfer.files.length, 'files');
         var dz = $('dropZone');
         if (dz) dz.classList.remove('dragover');
         Array.from(e.dataTransfer.files).forEach(uploadFile);
     });
 
+    // File input change (input overlay перехватывает клики сам)
     on('fileInput', 'change', function() {
-        console.log('[APP] fileInput change');
+        console.log('[APP] fileInput change', this.files.length, 'files');
         var inp = $('fileInput');
-        if (inp) Array.from(inp.files).forEach(uploadFile);
+        if (inp) {
+            Array.from(inp.files).forEach(uploadFile);
+            inp.value = ''; // сброс для повторной загрузки того же файла
+        }
     });
 
     on('recordMicBtn', 'click', function() { startRecording(true); });
@@ -495,7 +483,7 @@
         });
     });
 
-    // --- Polling ---
+    // Polling
     function startPolling() {
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(function() {
@@ -506,7 +494,7 @@
         }, 5000);
     }
 
-    // --- Init ---
+    // Init
     console.log('[APP] Initializing...');
     loadJobs();
     startPolling();
