@@ -1,6 +1,6 @@
 (function(){
     'use strict';
-    console.log('[APP] Script loaded v3');
+    console.log('[APP] Script loaded v4');
 
     var USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
@@ -22,6 +22,7 @@
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
+    var activeTab = 'transcript';
     var MAX_FILE_SIZE_MB = 200;
 
     function $(id) {
@@ -188,7 +189,7 @@
                 // Вкладки
                 var tb = $('tabsBar');
                 if (tb) tb.style.display = 'flex';
-                switchTab('transcript');
+                switchTab(activeTab);
 
                 // Резюме
                 var summaryActions = $('summaryActions');
@@ -329,6 +330,7 @@
     }
 
     function switchTab(tab) {
+        activeTab = tab;
         var tt = $('tabTranscript');
         var ts = $('tabSummary');
         var tc = $('tabTranscriptContent');
@@ -457,6 +459,7 @@
         currentSpeakers = {};
         currentSegments = [];
         editingSpeakers = false;
+        activeTab = 'transcript';
         var vs = $('viewScreen');
         var us = $('uploadScreen');
         if (vs) vs.style.display = 'none';
@@ -748,6 +751,7 @@
             currentSpeakers = {};
             currentSegments = [];
             editingSpeakers = false;
+            activeTab = 'transcript';
             showUpload();
         }).catch(function(e) {
             toast('Ошибка очистки: ' + e.message, 'error');
