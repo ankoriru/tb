@@ -9,7 +9,6 @@
 </head>
 <body>
     <div class="app">
-        <!-- Шапка -->
         <header class="header">
             <div class="header-left">
                 <button class="menu-btn" id="menuToggle">☰</button>
@@ -25,7 +24,6 @@
             </div>
         </header>
 
-        <!-- Баннер сессии -->
         <div class="session-banner" id="sessionBanner">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
             <span>Ваша сессия уникальна и не доступна другим пользователям. Файлы будут автоматически удалены через <strong>8 часов</strong>.</span>
@@ -33,7 +31,6 @@
         </div>
 
         <div class="main">
-            <!-- Левая панель -->
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <h2>Запись</h2>
@@ -61,11 +58,15 @@
                         <p>Записей не найдено</p>
                     </div>
                 </div>
+                <div class="sidebar-footer">
+                    <button class="btn btn-small btn-danger-outline" id="clearAllBtn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        Очистить все
+                    </button>
+                </div>
             </aside>
 
-            <!-- Правая панель -->
             <main class="content" id="content">
-                <!-- Экран загрузки -->
                 <div class="upload-screen" id="uploadScreen">
                     <div class="upload-card">
                         <div class="upload-header">
@@ -154,7 +155,6 @@
                     </div>
                 </div>
 
-                <!-- Экран просмотра задачи -->
                 <div class="view-screen" id="viewScreen" style="display:none">
                     <div class="view-header">
                         <button class="btn btn-ghost" id="backBtn">← Назад</button>
