@@ -1,4 +1,11 @@
 (function(){
+    // --- User ID ---
+    let USER_ID = localStorage.getItem('whisper_user_id');
+    if (!USER_ID) {
+        USER_ID = 'u-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36).slice(-4);
+        localStorage.setItem('whisper_user_id', USER_ID);
+    }
+
     const API = '';
     let pollTimer = null;
     let currentJobId = null;
@@ -54,18 +61,26 @@
     }
 
     // --- API helpers ---
+    function apiOpts(body) {
+        const opts = { headers: { 'X-User-ID': USER_ID } };
+        if (body) {
+            opts.method = 'POST';
+            opts.body = body;
+        }
+        return opts;
+    }
     async function apiGet(path) {
-        const r = await fetch(API + path);
+        const r = await fetch(API + path, { headers: { 'X-User-ID': USER_ID } });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.json();
     }
     async function apiPost(path, body) {
-        const r = await fetch(API + path, { method: 'POST', body });
+        const r = await fetch(API + path, { method: 'POST', headers: { 'X-User-ID': USER_ID }, body });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.json();
     }
     async function apiDelete(path) {
-        const r = await fetch(API + path, { method: 'DELETE' });
+        const r = await fetch(API + path, { method: 'DELETE', headers: { 'X-User-ID': USER_ID } });
         if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
         return r.json();
     }
@@ -145,9 +160,8 @@
             els.viewStatus.innerHTML = `<span class="${stClass}">${stText}</span>`;
 
             if (j.status === 'done') {
-                // Load text preview
                 try {
-                    const txt = await fetch(API + '/api/download/' + id + '?format=txt').then(r => r.text());
+                    const txt = await fetch(API + '/api/download/' + id + '?format=txt', { headers: { 'X-User-ID': USER_ID } }).then(r => r.text());
                     els.viewText.textContent = txt;
                 } catch(e) {
                     els.viewText.textContent = 'Текст недоступен';
@@ -192,7 +206,7 @@
         try {
             const data = await apiPost('/api/upload', fd);
             card.querySelector('.progress-fill').style.width = '100%';
-            card.querySelector('.progress-status').textContent = 'Принято в обработку: ' + data.job_id;
+            card.querySelector('.progress-status').textContent = 'Принято: ' + data.job_id;
             toast('Файл принят: ' + data.job_id, 'success');
             loadJobs();
         } catch(e) {
@@ -225,7 +239,6 @@
             if (audioOnly) {
                 stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             } else {
-                // system audio via getDisplayMedia (screen share with audio)
                 stream = await navigator.mediaDevices.getDisplayMedia({ video: false, audio: true });
             }
             mediaRecorder = new MediaRecorder(stream);
