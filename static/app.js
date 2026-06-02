@@ -20,7 +20,7 @@
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
-    var MAX_FILE_SIZE_MB = 700; // загрузится с /api/health
+    var MAX_FILE_SIZE_MB = 200; // загрузится с /api/health
 
     function $(id) {
         var el = document.getElementById(id);
@@ -268,11 +268,20 @@
 
     function startRecording(audioOnly) {
         console.log('[APP] startRecording', audioOnly);
+        if (!navigator.mediaDevices) {
+            toast('Ваш браузер не поддерживает запись аудио. Используйте Chrome или Edge.', 'error');
+            return;
+        }
         var constraints;
         if (audioOnly) {
             constraints = navigator.mediaDevices.getUserMedia({ audio: true });
         } else {
-            constraints = navigator.mediaDevices.getDisplayMedia({ video: false, audio: true });
+            // Системный звук — только Chrome/Edge, требует video:true в некоторых случаях
+            if (!navigator.mediaDevices.getDisplayMedia) {
+                toast('Захват системного звука не поддерживается в этом браузере. Используйте Chrome или Edge.', 'error');
+                return;
+            }
+            constraints = navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         }
         constraints.then(function(stream) {
             mediaRecorder = new MediaRecorder(stream);
@@ -296,7 +305,14 @@
             if (st) st.style.display = 'flex';
             toast('Запись началась', 'info');
         }).catch(function(e) {
-            toast('Ошибка доступа к микрофону: ' + e.message, 'error');
+            var msg = e.message || String(e);
+            if (msg.indexOf('NotAllowed') !== -1 || msg.indexOf('Permission denied') !== -1) {
+                toast('Доступ запрещён. Разрешите доступ в диалоге браузера.', 'error');
+            } else if (msg.indexOf('NotSupported') !== -1 || msg.indexOf('not supported') !== -1) {
+                toast('Захват системного звука не поддерживается. Используйте Chrome/Edge и включите «Поделиться аудио» при выборе вкладки.', 'error');
+            } else {
+                toast('Ошибка доступа: ' + msg, 'error');
+            }
         });
     }
 
@@ -310,9 +326,13 @@
 
     function startBothRecording() {
         console.log('[APP] startBothRecording');
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            toast('Захват системного звука не поддерживается в этом браузере. Используйте Chrome или Edge.', 'error');
+            return;
+        }
         Promise.all([
             navigator.mediaDevices.getUserMedia({ audio: true }),
-            navigator.mediaDevices.getDisplayMedia({ video: false, audio: true })
+            navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
         ]).then(function(streams) {
             var micStream = streams[0];
             var sysStream = streams[1];
@@ -345,7 +365,14 @@
             if (st) st.style.display = 'flex';
             toast('Запись микрофон + система началась', 'info');
         }).catch(function(e) {
-            toast('Ошибка: ' + e.message, 'error');
+            var msg = e.message || String(e);
+            if (msg.indexOf('NotAllowed') !== -1 || msg.indexOf('Permission denied') !== -1) {
+                toast('Доступ запрещён. Разрешите доступ в диалоге браузера.', 'error');
+            } else if (msg.indexOf('NotSupported') !== -1 || msg.indexOf('not supported') !== -1) {
+                toast('Захват системного звука не поддерживается. Используйте Chrome/Edge и включите «Поделиться аудио» при выборе вкладки.', 'error');
+            } else {
+                toast('Ошибка записи: ' + msg, 'error');
+            }
         });
     }
 
