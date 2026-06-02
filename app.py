@@ -145,13 +145,19 @@ def get_model():
 
 # --- Утилиты ---
 def extract_audio(video_path: Path, wav_path: Path):
+    if not video_path.exists():
+        raise FileNotFoundError(f"Входной файл не найден: {video_path}")
+    if video_path.stat().st_size == 0:
+        raise ValueError(f"Входной файл пустой: {video_path}")
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-i", str(video_path),
         "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", "-y",
         str(wav_path)
     ]
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg ошибка: {result.stderr.strip() or 'unknown error'}")
 
 def seconds_to_srt_time(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -436,6 +442,32 @@ def delete_job(job_id):
         if cur.rowcount == 0:
             return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
     return jsonify({"status": "ok", "msg": "Задача удалена"})
+
+@app.route("/api/jobs", methods=["DELETE"])
+def delete_all_jobs():
+    """Удалить все задачи и файлы текущего пользователя."""
+    uid = get_user_id()
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, txt_path, srt_path FROM jobs WHERE user_id=?", (uid,)
+        ).fetchall()
+        for job_id, txt, srt in rows:
+            for p in (txt, srt):
+                if p:
+                    try: Path(p).unlink(missing_ok=True)
+                    except: pass
+            conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE user_id=?", (uid,))
+        conn.commit()
+    # очистить upload-директорию пользователя
+    u_upload, u_result = user_dirs(uid)
+    for f in u_upload.iterdir():
+        try: f.unlink(missing_ok=True)
+        except: pass
+    for f in u_result.iterdir():
+        try: f.unlink(missing_ok=True)
+        except: pass
+    return jsonify({"status": "ok", "msg": "Все задачи и файлы удалены", "deleted_count": len(rows)})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
