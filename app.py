@@ -3,7 +3,9 @@
 """
 Оффлайн транскрибатор видео для Amvera.
 - Изоляция по пользователям (X-User-ID)
-- Автоудаление файлов и записей старше 48 часов
+- Автоудаление файлов старше 48 часов
+- Разделение по спикерам (эвристика по паузам)
+- Переименование спикеров после обработки
 """
 
 import os
@@ -13,6 +15,7 @@ import threading
 import subprocess
 import tempfile
 import time
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -33,6 +36,7 @@ COMPUTE_TYPE = "int8"
 MAX_FILE_SIZE_MB = 500
 ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".ogg"}
 RETENTION_HOURS = 48
+SPEAKER_GAP_SECONDS = 1.2  # пауза для смены спикера
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,11 +44,9 @@ MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- Helpers ---
 def get_user_id():
-    """Извлекает user_id из заголовка X-User-ID или генерирует новый."""
     uid = request.headers.get('X-User-ID', '') or request.args.get('user_id', '')
     if not uid or len(uid) > 64:
         uid = str(uuid.uuid4())[:16]
-    # sanitize: только буквы, цифры, дефис
     uid = ''.join(c for c in uid if c.isalnum() or c == '-')
     return uid or 'anonymous'
 
@@ -70,59 +72,60 @@ def init_db():
                 error TEXT,
                 txt_path TEXT,
                 srt_path TEXT,
-                tags TEXT
+                tags TEXT,
+                speakers_json TEXT
             )
         """)
-        # Миграция: добавить user_id если таблица старая
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS speakers (
+                job_id TEXT NOT NULL,
+                speaker_num INTEGER NOT NULL,
+                name TEXT,
+                PRIMARY KEY (job_id, speaker_num)
+            )
+        """)
         try:
-            conn.execute("SELECT user_id FROM jobs LIMIT 1")
+            conn.execute("SELECT speakers_json FROM jobs LIMIT 1")
         except sqlite3.OperationalError:
-            conn.execute("ALTER TABLE jobs ADD COLUMN user_id TEXT DEFAULT 'legacy'")
+            conn.execute("ALTER TABLE jobs ADD COLUMN speakers_json TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)")
         conn.commit()
 
 init_db()
 
-# --- Ротация: удаление старше 48 часов ---
+# --- Ротация ---
 def cleanup_old_files():
-    """Удаляет файлы и записи старше RETENTION_HOURS."""
     cutoff = (datetime.now() - timedelta(hours=RETENTION_HOURS)).isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, user_id, txt_path, srt_path FROM jobs WHERE created_at < ?",
-            (cutoff,)
+            "SELECT id, user_id, txt_path, srt_path FROM jobs WHERE created_at < ?", (cutoff,)
         ).fetchall()
         for job_id, uid, txt, srt in rows:
             for p in (txt, srt):
                 if p:
-                    try:
-                        Path(p).unlink(missing_ok=True)
-                    except Exception:
-                        pass
-            # очистка upload-файлов этого пользователя старше cutoff
+                    try: Path(p).unlink(missing_ok=True)
+                    except: pass
             u_upload, _ = user_dirs(uid)
             for f in u_upload.iterdir():
                 try:
                     if f.stat().st_mtime < (datetime.now() - timedelta(hours=RETENTION_HOURS)).timestamp():
                         f.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except: pass
         conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
+        conn.execute("DELETE FROM speakers WHERE job_id NOT IN (SELECT id FROM jobs)")
         conn.commit()
-    print(f"🧹 Ротация выполнена. Удалены записи старше {RETENTION_HOURS}ч.")
+    print(f"🧹 Ротация: удалены записи старше {RETENTION_HOURS}ч.")
 
 def cleaner_loop():
     while True:
-        time.sleep(3600)  # раз в час
-        try:
-            cleanup_old_files()
-        except Exception as e:
-            print(f"Ошибка ротации: {e}")
+        time.sleep(3600)
+        try: cleanup_old_files()
+        except Exception as e: print(f"Ошибка ротации: {e}")
 
 threading.Thread(target=cleaner_loop, daemon=True).start()
 
-# --- Ленивая загрузка модели ---
+# --- Модель ---
 _model = None
 _model_lock = threading.Lock()
 
@@ -134,12 +137,8 @@ def get_model():
                 from faster_whisper import WhisperModel
                 print("⏳ Загрузка модели Whisper small...")
                 _model = WhisperModel(
-                    MODEL_SIZE,
-                    device="cpu",
-                    compute_type=COMPUTE_TYPE,
-                    cpu_threads=2,
-                    download_root=str(MODELS_DIR),
-                    local_files_only=False
+                    MODEL_SIZE, device="cpu", compute_type=COMPUTE_TYPE,
+                    cpu_threads=2, download_root=str(MODELS_DIR), local_files_only=False
                 )
                 print("✅ Модель готова")
     return _model
@@ -161,8 +160,44 @@ def seconds_to_srt_time(seconds: float) -> str:
     millis = int((seconds - int(seconds)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
+def diarize_segments(segments, gap=SPEAKER_GAP_SECONDS):
+    """
+    Эвристическое разделение по спикерам на основе пауз между сегментами.
+    Возвращает список {speaker, text, start, end}.
+    """
+    result = []
+    current_speaker = 1
+    last_end = 0.0
+    for seg in segments:
+        if seg.start - last_end > gap:
+            current_speaker += 1
+        result.append({
+            "speaker": current_speaker,
+            "text": seg.text.strip(),
+            "start": seg.start,
+            "end": seg.end
+        })
+        last_end = seg.end
+    return result
+
+def build_txt(speaker_segments, speaker_names):
+    lines = []
+    for s in speaker_segments:
+        name = speaker_names.get(str(s["speaker"]), f"Спикер {s['speaker']}")
+        lines.append(f"{name}: {s['text']}")
+    return "\n".join(lines)
+
+def build_srt(speaker_segments, speaker_names):
+    lines = []
+    for idx, s in enumerate(speaker_segments, 1):
+        name = speaker_names.get(str(s["speaker"]), f"Спикер {s['speaker']}")
+        lines.append(str(idx))
+        lines.append(f"{seconds_to_srt_time(s['start'])} --> {seconds_to_srt_time(s['end'])}")
+        lines.append(f"{name}: {s['text']}")
+        lines.append("")
+    return "\n".join(lines)
+
 def process_job(job_id: str, uid: str, video_path: Path):
-    """Фоновая обработка одного видео."""
     _, u_result = user_dirs(uid)
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -177,35 +212,36 @@ def process_job(job_id: str, uid: str, video_path: Path):
             extract_audio(video_path, wav_path)
 
             segments, info = model.transcribe(
-                str(wav_path),
-                language="ru",
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500)
+                str(wav_path), language="ru", beam_size=5,
+                vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500)
             )
 
-            txt_lines = []
-            srt_lines = []
-            idx = 1
-            for seg in segments:
-                text = seg.text.strip()
-                txt_lines.append(text)
-                srt_lines.append(str(idx))
-                srt_lines.append(f"{seconds_to_srt_time(seg.start)} --> {seconds_to_srt_time(seg.end)}")
-                srt_lines.append(text)
-                srt_lines.append("")
-                idx += 1
+            # Diarization по паузам
+            speaker_segments = diarize_segments(list(segments))
+            speakers_json = json.dumps(speaker_segments, ensure_ascii=False)
+
+            # Определяем уникальных спикеров
+            unique_speakers = sorted({s["speaker"] for s in speaker_segments})
+            for spk in unique_speakers:
+                conn.execute(
+                    "INSERT OR IGNORE INTO speakers (job_id, speaker_num, name) VALUES (?, ?, ?)",
+                    (job_id, spk, f"Спикер {spk}")
+                )
+            conn.commit()
+
+            # Имена по умолчанию
+            speaker_names = {str(spk): f"Спикер {spk}" for spk in unique_speakers}
 
             base = u_result / job_id
             txt_file = base.with_suffix(".txt")
             srt_file = base.with_suffix(".srt")
 
-            txt_file.write_text("\n".join(txt_lines), encoding="utf-8")
-            srt_file.write_text("\n".join(srt_lines), encoding="utf-8")
+            txt_file.write_text(build_txt(speaker_segments, speaker_names), encoding="utf-8")
+            srt_file.write_text(build_srt(speaker_segments, speaker_names), encoding="utf-8")
 
         conn.execute(
-            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=? WHERE id=? AND user_id=?",
-            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), job_id, uid)
+            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=?, speakers_json=? WHERE id=? AND user_id=?",
+            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), speakers_json, job_id, uid)
         )
         conn.commit()
 
@@ -216,11 +252,31 @@ def process_job(job_id: str, uid: str, video_path: Path):
         )
         conn.commit()
     finally:
-        if video_path.exists():
-            video_path.unlink()
+        if video_path.exists(): video_path.unlink()
         conn.close()
 
-# --- Фоновый воркер ---
+def regenerate_files(job_id: str, uid: str):
+    """Перегенерировать TXT/SRT с учётом новых имён спикеров."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT speakers_json, txt_path, srt_path FROM jobs WHERE id=? AND user_id=?",
+            (job_id, uid)
+        ).fetchone()
+        if not row or not row[0]: return
+        speaker_segments = json.loads(row[0])
+        spk_rows = conn.execute(
+            "SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)
+        ).fetchall()
+        speaker_names = {str(num): name for num, name in spk_rows}
+        txt_path = Path(row[1])
+        srt_path = Path(row[2])
+        txt_path.write_text(build_txt(speaker_segments, speaker_names), encoding="utf-8")
+        srt_path.write_text(build_srt(speaker_segments, speaker_names), encoding="utf-8")
+    finally:
+        conn.close()
+
+# --- Worker ---
 worker_lock = threading.Lock()
 
 def worker_loop():
@@ -233,7 +289,6 @@ def worker_loop():
                     "SELECT id, user_id, filename FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1"
                 )
                 row = cur.fetchone()
-
             if row:
                 job_id, uid, filename = row
                 u_upload, _ = user_dirs(uid)
@@ -243,14 +298,13 @@ def worker_loop():
                     process_job(job_id, uid, video_path)
                 else:
                     conn.execute("UPDATE jobs SET status=?, error=? WHERE id=? AND user_id=?",
-                                 ("failed", "Файл не найден на диске", job_id, uid))
+                                 ("failed", "Файл не найден", job_id, uid))
                     conn.commit()
-
         time.sleep(5)
 
 threading.Thread(target=worker_loop, daemon=True).start()
 
-# --- Статика и SPA ---
+# --- Статика ---
 @app.route("/")
 def index():
     return send_from_directory(str(STATIC_DIR), "index.html")
@@ -282,20 +336,17 @@ def upload():
     uid = get_user_id()
     if "file" not in request.files:
         return jsonify({"status": "error", "msg": "Нет файла"}), 400
-
     file = request.files["file"]
     if not file or file.filename == "":
         return jsonify({"status": "error", "msg": "Пустой файл"}), 400
-
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXT:
         return jsonify({"status": "error", "msg": f"Формат {ext} не поддерживается"}), 400
-
     file.seek(0, os.SEEK_END)
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_FILE_SIZE_MB:
-        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ > лимит {MAX_FILE_SIZE_MB} МБ)"}), 400
+        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ > {MAX_FILE_SIZE_MB})"}), 400
 
     job_id = str(uuid.uuid4())[:12]
     safe_name = Path(file.filename).name.replace(" ", "_")
@@ -309,13 +360,7 @@ def upload():
             (job_id, uid, safe_name, "pending", datetime.now().isoformat())
         )
         conn.commit()
-
-    return jsonify({
-        "status": "ok",
-        "job_id": job_id,
-        "user_id": uid,
-        "msg": "Файл принят в обработку"
-    }), 202
+    return jsonify({"status": "ok", "job_id": job_id, "user_id": uid, "msg": "Файл принят"}), 202
 
 @app.route("/api/status/<job_id>")
 def status(job_id):
@@ -326,25 +371,50 @@ def status(job_id):
             "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path FROM jobs WHERE id=? AND user_id=?",
             (job_id, uid)
         ).fetchone()
-
     if not row:
         return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
-
     d = dict(row)
     result = {
-        "job_id": job_id,
-        "status": d["status"],
-        "created_at": d["created_at"],
-        "started_at": d["started_at"],
-        "finished_at": d["finished_at"],
-        "error": d["error"]
+        "job_id": job_id, "status": d["status"],
+        "created_at": d["created_at"], "started_at": d["started_at"],
+        "finished_at": d["finished_at"], "error": d["error"]
     }
     if d["status"] == "done":
         result["files"] = {
             "txt": f"/api/download/{job_id}?format=txt",
             "srt": f"/api/download/{job_id}?format=srt"
         }
+        # спикеры
+        spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
+        result["speakers"] = {str(num): name for num, name in spk_rows}
     return jsonify(result)
+
+@app.route("/api/jobs/<job_id>/speakers", methods=["POST"])
+def update_speakers(job_id):
+    uid = get_user_id()
+    data = request.get_json(force=True, silent=True) or {}
+    names = data.get("names", {})
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # проверим существование задачи
+        row = conn.execute("SELECT 1 FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
+        if not row:
+            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+        for spk_num, name in names.items():
+            try:
+                num = int(spk_num)
+                conn.execute(
+                    "INSERT INTO speakers (job_id, speaker_num, name) VALUES (?, ?, ?) ON CONFLICT(job_id, speaker_num) DO UPDATE SET name=excluded.name",
+                    (job_id, num, str(name)[:100])
+                )
+            except ValueError:
+                continue
+        conn.commit()
+        # перегенерировать файлы
+        regenerate_files(job_id, uid)
+        return jsonify({"status": "ok", "msg": "Имена спикеров обновлены"})
+    finally:
+        conn.close()
 
 @app.route("/api/download/<job_id>")
 def download(job_id):
@@ -354,15 +424,11 @@ def download(job_id):
         row = conn.execute(
             "SELECT txt_path, srt_path, status FROM jobs WHERE id=? AND user_id=?", (job_id, uid)
         ).fetchone()
-
     if not row or row[2] != "done":
         return jsonify({"status": "error", "msg": "Результат не готов"}), 400
-
-    txt_path, srt_path, _ = row
-    path = Path(txt_path if fmt == "txt" else srt_path)
+    path = Path(row[0] if fmt == "txt" else row[1])
     if not path.exists():
         return jsonify({"status": "error", "msg": "Файл удалён"}), 404
-
     return send_file(path, as_attachment=True)
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
@@ -373,11 +439,10 @@ def delete_job(job_id):
         if row:
             for p in row:
                 if p:
-                    try:
-                        Path(p).unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    try: Path(p).unlink(missing_ok=True)
+                    except: pass
         cur = conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, uid))
+        conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
         conn.commit()
         if cur.rowcount == 0:
             return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
