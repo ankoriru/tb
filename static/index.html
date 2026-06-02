@@ -3,25 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>СИБУР Транскрибация</title>
+    <title>Транскрибация</title>
     <link rel="stylesheet" href="/static/style.css">
 <base target="_blank">
 </head>
 <body>
     <div class="app">
+        <!-- Шапка -->
         <header class="header">
             <div class="header-left">
                 <button class="menu-btn" id="menuToggle">☰</button>
                 <div class="logo">
-                    <span class="logo-text">СИБУР</span>
-                    <span class="logo-sub">Транскрибация</span>
+                    <span class="logo-text">Транскрибация</span>
                 </div>
             </div>
             <div class="header-right">
-                <button class="btn btn-search" id="globalSearchBtn">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-                    Inquire
-                </button>
                 <button class="btn btn-primary" id="newRecordBtn">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
                     Новая запись
@@ -29,7 +25,15 @@
             </div>
         </header>
 
+        <!-- Баннер сессии -->
+        <div class="session-banner" id="sessionBanner">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <span>Ваша сессия уникальна и не доступна другим пользователям. Файлы будут автоматически удалены через <strong>8 часов</strong>.</span>
+            <button class="banner-close" id="bannerClose">×</button>
+        </div>
+
         <div class="main">
+            <!-- Левая панель -->
             <aside class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <h2>Запись</h2>
@@ -59,6 +63,7 @@
                 </div>
             </aside>
 
+            <!-- Правая панель -->
             <main class="content" id="content">
                 <!-- Экран загрузки -->
                 <div class="upload-screen" id="uploadScreen">
@@ -161,8 +166,6 @@
                     </div>
                     <div class="view-meta" id="viewMeta"></div>
                     <div class="view-status-badge" id="viewStatus"></div>
-
-                    <!-- Участники / Спикеры -->
                     <div class="speakers-panel" id="speakersPanel" style="display:none">
                         <div class="speakers-header">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
@@ -172,7 +175,6 @@
                         <div class="speakers-list" id="speakersList"></div>
                         <button class="btn btn-primary btn-small" id="saveSpeakersBtn" style="margin-top:8px">💾 Сохранить имена</button>
                     </div>
-
                     <div class="view-content">
                         <pre id="viewText"></pre>
                     </div>
