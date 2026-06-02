@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>СИБУР Транскрибация</title>
+    <link rel="stylesheet" href="/static/style.css">
+<base target="_blank">
+</head>
+<body>
+    <div class="app">
+        <!-- Шапка -->
+        <header class="header">
+            <div class="header-left">
+                <button class="menu-btn" id="menuToggle">☰</button>
+                <div class="logo">
+                    <span class="logo-text">СИБУР</span>
+                    <span class="logo-sub">Транскрибация</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-search" id="globalSearchBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                    Inquire
+                </button>
+                <button class="btn btn-primary" id="newRecordBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
+                    Новая запись
+                </button>
+            </div>
+        </header>
+
+        <div class="main">
+            <!-- Левая панель -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <h2>Запись</h2>
+                    <div class="sidebar-actions">
+                        <button class="icon-btn" id="searchToggle" title="Поиск">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                        </button>
+                        <button class="btn btn-small btn-primary" id="sidebarNewBtn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"></path></svg>
+                            Новый
+                        </button>
+                    </div>
+                </div>
+
+                <div class="search-box" id="searchBox" style="display:none">
+                    <input type="text" id="searchInput" placeholder="Поиск записей...">
+                </div>
+
+                <div class="sidebar-filters">
+                    <button class="filter-btn active" id="filterAll">Все</button>
+                    <button class="filter-btn" id="filterDone">Готово</button>
+                    <button class="filter-btn" id="filterProcessing">В работе</button>
+                </div>
+
+                <div class="records-list" id="recordsList">
+                    <div class="empty-state">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                        <p>Записей не найдено</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Правая панель -->
+            <main class="content" id="content">
+                <!-- Экран загрузки -->
+                <div class="upload-screen" id="uploadScreen">
+                    <div class="upload-card">
+                        <div class="upload-header">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mic-icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                            <h2>Загрузка аудио</h2>
+                        </div>
+
+                        <div class="drop-zone" id="dropZone">
+                            <input type="file" id="fileInput" accept="video/*,audio/*" multiple hidden>
+                            <div class="drop-content">
+                                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                                <p>Перетащите аудиофайлы сюда или нажмите для выбора</p>
+                                <span class="formats">Поддерживаются форматы MP3, WAV, M4A, MP4, MOV, AVI, MKV и другие</span>
+                            </div>
+                        </div>
+
+                        <div class="divider"><span>или</span></div>
+
+                        <div class="record-section">
+                            <h3>Аудиозапись</h3>
+                            <div class="record-buttons">
+                                <button class="record-btn record-mic" id="recordMicBtn">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                                    <span>Микрофон</span>
+                                </button>
+                                <button class="record-btn record-system" id="recordSystemBtn">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="3" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                                    <span>Системный звук</span>
+                                </button>
+                                <button class="record-btn record-both" id="recordBothBtn">
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                                    <span>Микрофон + система</span>
+                                </button>
+                            </div>
+                            <div class="record-hints">
+                                <p><strong>Микрофон:</strong> Записывает только ваш голос</p>
+                                <p><strong>Системный звук:</strong> Записывает участников встречи и системные звуки</p>
+                                <p><strong>Микрофон + система:</strong> Записывает ваш голос + участников встречи (рекомендуется для онлайн-встреч)</p>
+                            </div>
+                            <div class="recorder-status" id="recorderStatus" style="display:none">
+                                <div class="recorder-wave">
+                                    <span class="rec-dot"></span>
+                                    <span class="rec-time" id="recTime">00:00</span>
+                                </div>
+                                <button class="btn btn-danger" id="stopRecBtn">⏹ Остановить запись</button>
+                            </div>
+                        </div>
+
+                        <div class="tags-section">
+                            <div class="tags-header">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"></path><path d="M7 7h.01"></path></svg>
+                                <span>Теги</span>
+                            </div>
+                            <div class="tags-input-wrap">
+                                <input type="text" id="tagsInput" placeholder="Теги ещё не созданы. Создайте теги">
+                            </div>
+                        </div>
+
+                        <div class="params-section">
+                            <button class="params-toggle" id="paramsToggle">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                                <span>Расширенные параметры ASR</span>
+                                <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </button>
+                            <div class="params-body" id="paramsBody" style="display:none">
+                                <div class="param-row">
+                                    <label>Модель Whisper</label>
+                                    <select id="modelSelect">
+                                        <option value="tiny">tiny (быстро, базовое качество)</option>
+                                        <option value="base">base</option>
+                                        <option value="small" selected>small (рекомендуется)</option>
+                                    </select>
+                                </div>
+                                <div class="param-row">
+                                    <label>Язык</label>
+                                    <select id="langSelect">
+                                        <option value="ru" selected>Русский</option>
+                                        <option value="en">English</option>
+                                        <option value="auto">Автоопределение</option>
+                                    </select>
+                                </div>
+                                <div class="param-row">
+                                    <label>Формат вывода</label>
+                                    <div class="checkbox-group">
+                                        <label><input type="checkbox" id="outTxt" checked> Текст (.txt)</label>
+                                        <label><input type="checkbox" id="outSrt" checked> Субтитры (.srt)</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Экран просмотра задачи -->
+                <div class="view-screen" id="viewScreen" style="display:none">
+                    <div class="view-header">
+                        <button class="btn btn-ghost" id="backBtn">← Назад</button>
+                        <div class="view-actions">
+                            <button class="btn btn-small" id="downloadTxtBtn">📄 TXT</button>
+                            <button class="btn btn-small" id="downloadSrtBtn">🎞 SRT</button>
+                            <button class="btn btn-small btn-danger" id="deleteJobBtn">🗑 Удалить</button>
+                        </div>
+                    </div>
+                    <div class="view-meta" id="viewMeta"></div>
+                    <div class="view-status-badge" id="viewStatus"></div>
+                    <div class="view-content">
+                        <pre id="viewText"></pre>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Toast уведомления -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
