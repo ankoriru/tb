@@ -213,7 +213,7 @@
             if (j.status === 'done' && j.files && j.files.audio) {
                 if (apw) apw.style.display = 'block';
                 if (ap) {
-                    ap.src = j.files.audio;
+                    ap.src = j.files.audio + '?user_id=' + encodeURIComponent(USER_ID);
                     ap.load();
                 }
             } else {
@@ -926,10 +926,10 @@
     });
 
     on('downloadTxtBtn', 'click', function() {
-        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt', '_blank');
+        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt&user_id=' + encodeURIComponent(USER_ID), '_blank');
     });
     on('downloadSrtBtn', 'click', function() {
-        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=srt', '_blank');
+        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=srt&user_id=' + encodeURIComponent(USER_ID), '_blank');
     });
 
     on('saveSpeakersBtn', 'click', saveSpeakers);
