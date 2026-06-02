@@ -68,10 +68,10 @@ def user_dirs(uid):
     return u_upload, u_result
 
 # --- Инициализация БД ---
-def init_db()
-print(f"🔑 LLM_API_KEY configured: {bool(LLM_API_KEY)}")
-print(f"🔗 LLM_API_URL: {LLM_API_URL}")
-print(f"🤖 LLM_MODEL default: {LLM_MODEL}"):
+def init_db():
+    print(f"🔑 LLM_API_KEY configured: {bool(LLM_API_KEY)}")
+    print(f"🔗 LLM_API_URL: {LLM_API_URL}")
+    print(f"🤖 LLM_MODEL default: {LLM_MODEL}")
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
