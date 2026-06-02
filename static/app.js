@@ -390,14 +390,12 @@
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         // Списки
         html = html.replace(/^\- (.*$)/gim, '<li>$1</li>');
-        html = html.replace(/(<li>.*<\/li>
-?)+/g, function(match) {
+        html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
             return '<ul>' + match + '</ul>';
         });
         // Таблицы (простые)
         if (html.indexOf('|') !== -1) {
-            var lines = html.split('
-');
+            var lines = html.split('\n');
             var inTable = false;
             var tableHtml = '';
             var result = [];
@@ -427,13 +425,10 @@
                 tableHtml += '</table>';
                 result.push(tableHtml);
             }
-            html = result.join('
-');
+            html = result.join('\n');
         }
         // Абзацы
-        html = html.replace(/
-
-/g, '</p><p>');
+        html = html.replace(/\n\n/g, '</p><p>');
         html = '<p>' + html + '</p>';
         // Убрать пустые p
         html = html.replace(/<p><\/p>/g, '');
