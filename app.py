@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Оффлайн транскрибатор видео для Amvera.
+Оффлайн транскрибатор видео для Amvera с веб-интерфейсом.
 Все кэши пишутся в /app/data (Persistent Volume).
 Модель грузится лениво — только при первой задаче.
 """
@@ -16,7 +16,7 @@ import tempfile
 import time
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 
 app = Flask(__name__)
 
@@ -26,11 +26,12 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULT_DIR = DATA_DIR / "results"
 MODELS_DIR = DATA_DIR / "models"
 DB_PATH = DATA_DIR / "jobs.db"
+STATIC_DIR = Path(__file__).parent / "static"
 
 MODEL_SIZE = "small"
 COMPUTE_TYPE = "int8"
 MAX_FILE_SIZE_MB = 100
-ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg"}
+ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".webm", ".ogg"}
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,15 +43,12 @@ def check_volume():
     try:
         test_file.write_text("ok")
         test_file.unlink()
-        print(f"✅ Persistent Volume {DATA_DIR} доступен для записи")
         return True
     except Exception as e:
         print(f"❌ Persistent Volume {DATA_DIR} НЕ доступен: {e}")
         return False
 
-if not check_volume():
-    # Не падаем сразу, но логируем. Amvera увидит в логах.
-    pass
+volume_ok = check_volume()
 
 # --- Инициализация БД ---
 def init_db():
@@ -65,7 +63,8 @@ def init_db():
                 finished_at TEXT,
                 error TEXT,
                 txt_path TEXT,
-                srt_path TEXT
+                srt_path TEXT,
+                tags TEXT
             )
         """)
 
@@ -80,7 +79,6 @@ def get_model():
     if _model is None:
         with _model_lock:
             if _model is None:
-                # Импорт здесь, чтобы не тратить время при старте контейнера
                 from faster_whisper import WhisperModel
                 print("⏳ Загрузка / скачивание модели Whisper small...")
                 print(f"   Кэш HF: {os.environ.get('HF_HOME')}")
@@ -175,7 +173,6 @@ def process_job(job_id: str, video_path: Path):
 worker_lock = threading.Lock()
 
 def worker_loop():
-    # Даём контейнеру время стабилизироваться и пройти healthcheck
     time.sleep(10)
     print("🔄 Worker запущен")
     while True:
@@ -199,24 +196,32 @@ def worker_loop():
 
         time.sleep(5)
 
-# Запускаем воркер в отдельном потоке с задержкой
 threading.Thread(target=worker_loop, daemon=True).start()
 
-# --- API Endpoints ---
-
+# --- Статика и SPA ---
 @app.route("/")
 def index():
-    """Корневой healthcheck для Amvera."""
-    return jsonify({
-        "status": "ok",
-        "service": "whisper-transcriber",
-        "model": MODEL_SIZE,
-        "volume_ready": check_volume()
-    })
+    return send_from_directory(str(STATIC_DIR), "index.html")
+
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory(str(STATIC_DIR), filename)
+
+# --- API ---
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "model": MODEL_SIZE})
+    return jsonify({"status": "ok", "model": MODEL_SIZE, "volume_ready": volume_ok})
+
+@app.route("/api/jobs")
+def list_jobs():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, filename, status, created_at, started_at, finished_at, error, tags FROM jobs ORDER BY created_at DESC"
+        ).fetchall()
+    jobs = [dict(r) for r in rows]
+    return jsonify({"jobs": jobs})
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
@@ -258,6 +263,7 @@ def upload():
 @app.route("/api/status/<job_id>")
 def status(job_id):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path FROM jobs WHERE id=?",
             (job_id,)
@@ -266,16 +272,16 @@ def status(job_id):
     if not row:
         return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
 
-    status_val, created, started, finished, error, txt, srt = row
+    d = dict(row)
     result = {
         "job_id": job_id,
-        "status": status_val,
-        "created_at": created,
-        "started_at": started,
-        "finished_at": finished,
-        "error": error
+        "status": d["status"],
+        "created_at": d["created_at"],
+        "started_at": d["started_at"],
+        "finished_at": d["finished_at"],
+        "error": d["error"]
     }
-    if status_val == "done":
+    if d["status"] == "done":
         result["files"] = {
             "txt": f"/api/download/{job_id}?format=txt",
             "srt": f"/api/download/{job_id}?format=srt"
@@ -299,6 +305,21 @@ def download(job_id):
         return jsonify({"status": "error", "msg": "Файл удалён"}), 404
 
     return send_file(path, as_attachment=True)
+
+@app.route("/api/jobs/<job_id>", methods=["DELETE"])
+def delete_job(job_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT txt_path, srt_path FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row:
+            for p in row:
+                if p:
+                    try:
+                        Path(p).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.commit()
+    return jsonify({"status": "ok", "msg": "Задача удалена"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
