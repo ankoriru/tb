@@ -361,18 +361,21 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Sego
     background: #c8e6c9;
 }
 
-/* Кнопка очистки в сайдбаре */
-.sidebar-footer {
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
+
+/* Кнопка очистки справа снизу */
+.clear-all-wrap {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100;
 }
-.btn-danger-outline {
+.clear-all-wrap .btn-danger-outline {
     border-color: var(--danger);
     color: var(--danger);
-    background: transparent;
-    width: 100%;
-    justify-content: center;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(4px);
+    box-shadow: var(--shadow-hover);
 }
-.btn-danger-outline:hover {
+.clear-all-wrap .btn-danger-outline:hover {
     background: #ffebee;
 }
