@@ -1,6 +1,6 @@
 (function(){
     'use strict';
-    console.log('[APP] Script loaded v2');
+    console.log('[APP] Script loaded v3');
 
     var USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
@@ -15,13 +15,14 @@
     var pollTimer = null;
     var currentJobId = null;
     var currentSpeakers = {};
+    var currentSegments = [];
+    var editingSpeakers = false;
     var mediaRecorder = null;
     var recChunks = [];
     var recStartTime = 0;
     var recTimerInterval = null;
     var activeFilter = 'all';
     var MAX_FILE_SIZE_MB = 200;
-    var editingSpeakers = false; // true когда пользователь редактирует спикеров // загрузится с /api/health
 
     function $(id) {
         var el = document.getElementById(id);
@@ -91,6 +92,12 @@
         return d.toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
     }
 
+    function formatTime(seconds) {
+        var m = Math.floor(seconds / 60);
+        var s = Math.floor(seconds % 60);
+        return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    }
+
     function esc(s) {
         var d = document.createElement('div');
         d.textContent = s || '';
@@ -130,6 +137,7 @@
         }
     }
 
+    // --- View job ---
     function openJob(id) {
         console.log('[APP] openJob', id);
         currentJobId = id;
@@ -146,43 +154,93 @@
             var vsb = $('viewStatus');
             if (vsb) vsb.innerHTML = '<span class="record-status status-' + j.status + '">' + stText + '</span>';
 
+            // Аудио плеер
+            var apw = $('audioPlayerWrap');
+            var ap = $('audioPlayer');
+            if (j.status === 'done' && j.files && j.files.audio) {
+                if (apw) apw.style.display = 'block';
+                if (ap) {
+                    ap.src = j.files.audio;
+                    ap.load();
+                }
+            } else {
+                if (apw) apw.style.display = 'none';
+                if (ap) { ap.pause(); ap.src = ''; }
+            }
+
             if (j.status === 'done') {
                 currentSpeakers = j.speakers || {};
-                // Не перерисовывать спикеров если пользователь их редактирует
+                currentSegments = [];
+                if (j.speakers_json) {
+                    try {
+                        currentSegments = JSON.parse(j.speakers_json);
+                    } catch(e) {}
+                }
+
                 if (!editingSpeakers) {
                     renderSpeakers(currentSpeakers);
                 }
+                renderTranscript(currentSegments, currentSpeakers);
+
                 var sp = $('speakersPanel');
                 if (sp) sp.style.display = 'block';
 
-                fetch(API + '/api/download/' + id + '?format=txt', { headers: { 'X-User-ID': USER_ID } })
-                    .then(function(r) { return r.text(); })
-                    .then(function(txt) {
-                        var vt = $('viewText');
-                        if (vt) vt.textContent = txt;
-                    }).catch(function() {
-                        var vt = $('viewText');
-                        if (vt) vt.textContent = 'Текст недоступен';
-                    });
+                // Вкладки
+                var tb = $('tabsBar');
+                if (tb) tb.style.display = 'flex';
+                switchTab('transcript');
+
+                // Резюме
+                var summaryActions = $('summaryActions');
+                var summaryHint = $('summaryHint');
+                var summaryContent = $('summaryContent');
+                if (summaryActions) {
+                    if (j.llm_configured) {
+                        summaryActions.style.display = 'flex';
+                        if (summaryHint) summaryHint.style.display = 'none';
+                    } else {
+                        summaryActions.style.display = 'flex';
+                        if (summaryHint) summaryHint.style.display = '';
+                        var genBtn = $('generateSummaryBtn');
+                        if (genBtn) {
+                            genBtn.disabled = true;
+                            genBtn.textContent = '🔒 API ключ не настроен';
+                        }
+                    }
+                }
+                if (j.summary) {
+                    if (summaryContent) summaryContent.innerHTML = markdownToHtml(j.summary);
+                    if (summaryActions) summaryActions.style.display = 'none';
+                } else {
+                    if (summaryContent) summaryContent.innerHTML = '';
+                }
 
                 var dtb = $('downloadTxtBtn');
                 var dsb = $('downloadSrtBtn');
                 if (dtb) dtb.style.display = '';
                 if (dsb) dsb.style.display = '';
             } else if (j.error) {
-                var vt = $('viewText');
-                if (vt) vt.textContent = 'Ошибка: ' + j.error;
+                var tc = $('transcriptContent');
+                if (tc) tc.innerHTML = '<pre>Ошибка: ' + esc(j.error) + '</pre>';
                 var sp = $('speakersPanel');
                 if (sp) sp.style.display = 'none';
+                var tb = $('tabsBar');
+                if (tb) tb.style.display = 'none';
+                var apw = $('audioPlayerWrap');
+                if (apw) apw.style.display = 'none';
                 var dtb = $('downloadTxtBtn');
                 var dsb = $('downloadSrtBtn');
                 if (dtb) dtb.style.display = 'none';
                 if (dsb) dsb.style.display = 'none';
             } else {
-                var vt = $('viewText');
-                if (vt) vt.textContent = 'Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.';
+                var tc = $('transcriptContent');
+                if (tc) tc.innerHTML = '<pre>Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.</pre>';
                 var sp = $('speakersPanel');
                 if (sp) sp.style.display = 'none';
+                var tb = $('tabsBar');
+                if (tb) tb.style.display = 'none';
+                var apw = $('audioPlayerWrap');
+                if (apw) apw.style.display = 'none';
                 var dtb = $('downloadTxtBtn');
                 var dsb = $('downloadSrtBtn');
                 if (dtb) dtb.style.display = 'none';
@@ -205,7 +263,6 @@
             list.innerHTML = keys.map(function(num) {
                 return '<div class="speaker-row"><span class="speaker-label">Спикер ' + esc(num) + '</span><input type="text" data-spk="' + esc(num) + '" value="' + esc(speakers[num]) + '" placeholder="Введите ФИО или название"></div>';
             }).join('');
-            // Добавить обработчики focus/blur для остановки polling
             list.querySelectorAll('input[data-spk]').forEach(function(inp) {
                 inp.addEventListener('focus', function() {
                     editingSpeakers = true;
@@ -217,6 +274,173 @@
                 });
             });
         }
+    }
+
+    function renderTranscript(segments, speakerNames) {
+        var container = $('transcriptContent');
+        if (!container) return;
+        if (!segments || !segments.length) {
+            container.innerHTML = '<pre id="viewText"></pre>';
+            // fallback: загрузить txt
+            if (currentJobId) {
+                fetch(API + '/api/download/' + currentJobId + '?format=txt', { headers: { 'X-User-ID': USER_ID } })
+                    .then(function(r) { return r.text(); })
+                    .then(function(txt) {
+                        var vt = $('viewText');
+                        if (vt) vt.textContent = txt;
+                    });
+            }
+            return;
+        }
+        container.innerHTML = segments.map(function(seg, idx) {
+            var name = (speakerNames && speakerNames[String(seg.speaker)]) || ('Спикер ' + seg.speaker);
+            return '<div class="transcript-segment" data-start="' + seg.start + '" data-end="' + seg.end + '" title="Кликните для прослушивания">' +
+                '<span class="seg-time">[' + formatTime(seg.start) + ']</span>' +
+                '<span class="seg-speaker">' + esc(name) + ':</span>' +
+                '<span class="seg-text">' + esc(seg.text) + '</span>' +
+                '</div>';
+        }).join('');
+
+        container.querySelectorAll('.transcript-segment').forEach(function(el) {
+            el.addEventListener('click', function() {
+                playSegment(parseFloat(el.dataset.start), parseFloat(el.dataset.end));
+            });
+        });
+    }
+
+    function playSegment(start, end) {
+        var ap = $('audioPlayer');
+        if (!ap || !ap.src) {
+            toast('Аудио недоступно', 'error');
+            return;
+        }
+        ap.currentTime = start;
+        ap.play().catch(function(e) {
+            console.error('Audio play error:', e);
+        });
+        // Авто-стоп по end
+        var stopAt = end;
+        var checkInterval = setInterval(function() {
+            if (ap.currentTime >= stopAt || ap.paused) {
+                ap.pause();
+                clearInterval(checkInterval);
+            }
+        }, 100);
+    }
+
+    function switchTab(tab) {
+        var tt = $('tabTranscript');
+        var ts = $('tabSummary');
+        var tc = $('tabTranscriptContent');
+        var sc = $('tabSummaryContent');
+        if (tab === 'transcript') {
+            if (tt) tt.classList.add('active');
+            if (ts) ts.classList.remove('active');
+            if (tc) tc.classList.add('active');
+            if (sc) sc.classList.remove('active');
+        } else {
+            if (tt) tt.classList.remove('active');
+            if (ts) ts.classList.add('active');
+            if (tc) tc.classList.remove('active');
+            if (sc) sc.classList.add('active');
+        }
+    }
+
+    function generateSummary() {
+        if (!currentJobId) return;
+        var btn = $('generateSummaryBtn');
+        var content = $('summaryContent');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Генерация...';
+        }
+        if (content) content.innerHTML = '<div style="text-align:center;padding:40px"><span class="spinner"></span><p>Анализируем транскрипцию через LLM...</p><p style="font-size:12px;color:var(--text-secondary)">Это может занять 30–60 секунд</p></div>';
+
+        apiPostJson('/api/jobs/' + currentJobId + '/summary', {}).then(function(data) {
+            if (data.summary) {
+                if (content) content.innerHTML = markdownToHtml(data.summary);
+                var actions = $('summaryActions');
+                if (actions) actions.style.display = 'none';
+                toast('Резюме сгенерировано', 'success');
+            } else {
+                if (content) content.innerHTML = '<p>Ошибка: ' + esc(data.msg) + '</p>';
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🤖 Сгенерировать резюме (LLM)';
+            }
+        }).catch(function(e) {
+            if (content) content.innerHTML = '<p>Ошибка: ' + esc(e.message) + '</p>';
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🤖 Сгенерировать резюме (LLM)';
+            }
+            toast('Ошибка генерации: ' + e.message, 'error');
+        });
+    }
+
+    // Простой markdown → html
+    function markdownToHtml(md) {
+        if (!md) return '';
+        var html = esc(md);
+        // Заголовки ##
+        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+        // Жирный
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        // Списки
+        html = html.replace(/^\- (.*$)/gim, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>
+?)+/g, function(match) {
+            return '<ul>' + match + '</ul>';
+        });
+        // Таблицы (простые)
+        if (html.indexOf('|') !== -1) {
+            var lines = html.split('
+');
+            var inTable = false;
+            var tableHtml = '';
+            var result = [];
+            lines.forEach(function(line) {
+                if (line.trim().startsWith('|')) {
+                    var cells = line.split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c !== ''; });
+                    if (cells.length > 1) {
+                        if (!inTable) {
+                            inTable = true;
+                            tableHtml = '<table>';
+                        }
+                        // Пропускаем строку разделителя ---
+                        if (cells.every(function(c) { return c.replace(/-/g,'') === ''; })) return;
+                        tableHtml += '<tr>' + cells.map(function(c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
+                        return;
+                    }
+                }
+                if (inTable) {
+                    tableHtml += '</table>';
+                    result.push(tableHtml);
+                    inTable = false;
+                    tableHtml = '';
+                }
+                result.push(line);
+            });
+            if (inTable) {
+                tableHtml += '</table>';
+                result.push(tableHtml);
+            }
+            html = result.join('
+');
+        }
+        // Абзацы
+        html = html.replace(/
+
+/g, '</p><p>');
+        html = '<p>' + html + '</p>';
+        // Убрать пустые p
+        html = html.replace(/<p><\/p>/g, '');
+        html = html.replace(/<p>(<h[23]>.*?<\/h[23]>)<\/p>/g, '$1');
+        html = html.replace(/<p>(<table>.*?<\/table>)<\/p>/g, '$1');
+        html = html.replace(/<p>(<ul>.*?<\/ul>)<\/p>/g, '$1');
+        return html;
     }
 
     function saveSpeakers() {
@@ -236,10 +460,14 @@
         console.log('[APP] showUpload');
         currentJobId = null;
         currentSpeakers = {};
+        currentSegments = [];
+        editingSpeakers = false;
         var vs = $('viewScreen');
         var us = $('uploadScreen');
         if (vs) vs.style.display = 'none';
         if (us) us.style.display = 'block';
+        var ap = $('audioPlayer');
+        if (ap) { ap.pause(); ap.src = ''; }
         loadJobs();
     }
 
@@ -254,7 +482,7 @@
         fd.append('file', file);
         var card = document.createElement('div');
         card.className = 'upload-progress';
-        card.innerHTML = '<div class="upload-progress-file">' + esc(file.name) + ' (' + (file.size/1024/1024).toFixed(1) + ' МБ)</div><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-status">Загрузка...</div>';
+        card.innerHTML = '<div class="upload-progress-file">' + esc(file.name) + ' (' + sizeMb.toFixed(1) + ' МБ)</div><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-status">Загрузка...</div>';
         var zone = $('dropZone');
         if (zone && zone.parentNode) zone.parentNode.insertBefore(card, zone.nextSibling);
 
@@ -291,7 +519,6 @@
         if (audioOnly) {
             constraints = navigator.mediaDevices.getUserMedia({ audio: true });
         } else {
-            // Системный звук — только Chrome/Edge, требует video:true в некоторых случаях
             if (!navigator.mediaDevices.getDisplayMedia) {
                 toast('Захват системного звука не поддерживается в этом браузере. Используйте Chrome или Edge.', 'error');
                 return;
@@ -406,7 +633,6 @@
     // === EVENT BINDINGS ===
     console.log('[APP] Binding events...');
 
-    // Drag & Drop (на dropZone, не на input)
     on('dropZone', 'dragover', function(e) {
         e.preventDefault();
         var dz = $('dropZone');
@@ -424,13 +650,12 @@
         Array.from(e.dataTransfer.files).forEach(uploadFile);
     });
 
-    // File input change (input overlay перехватывает клики сам)
     on('fileInput', 'change', function() {
         console.log('[APP] fileInput change', this.files.length, 'files');
         var inp = $('fileInput');
         if (inp) {
             Array.from(inp.files).forEach(uploadFile);
-            inp.value = ''; // сброс для повторной загрузки того же файла
+            inp.value = '';
         }
     });
 
@@ -486,6 +711,10 @@
 
     on('saveSpeakersBtn', 'click', saveSpeakers);
 
+    on('tabTranscript', 'click', function() { switchTab('transcript'); });
+    on('tabSummary', 'click', function() { switchTab('summary'); });
+    on('generateSummaryBtn', 'click', generateSummary);
+
     on('paramsToggle', 'click', function() {
         var body = $('paramsBody');
         var toggle = $('paramsToggle');
@@ -511,7 +740,6 @@
     on('clearAllBtn', 'click', function() {
         console.log('[APP] clearAllBtn click');
         if (!confirm('⚠️ ВНИМАНИЕ\n\nВсе загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.\n\nПродолжить?')) return;
-        // Удалить все прогресс-карточки из DOM
         document.querySelectorAll('.upload-progress').forEach(function(el) { el.remove(); });
         fetch(API + '/api/jobs', {
             method: 'DELETE',
@@ -523,6 +751,8 @@
             toast(data.msg || 'Все задачи удалены', 'success');
             currentJobId = null;
             currentSpeakers = {};
+            currentSegments = [];
+            editingSpeakers = false;
             showUpload();
         }).catch(function(e) {
             toast('Ошибка очистки: ' + e.message, 'error');
@@ -534,7 +764,6 @@
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(function() {
             loadJobs();
-            // Не обновлять view если пользователь редактирует спикеров
             if (currentJobId && !editingSpeakers && $('viewScreen') && $('viewScreen').style.display !== 'none') {
                 openJob(currentJobId);
             }
@@ -543,6 +772,13 @@
 
     // Init
     console.log('[APP] Initializing...');
+    apiGet('/api/health').then(function(data) {
+        if (data.max_file_size_mb) {
+            MAX_FILE_SIZE_MB = data.max_file_size_mb;
+            var lbl = $('maxSizeLabel');
+            if (lbl) lbl.textContent = MAX_FILE_SIZE_MB + ' МБ';
+        }
+    }).catch(function() {});
     loadJobs();
     startPolling();
     console.log('[APP] Initialized');
