@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Транскрибация</title>
+    <link rel="icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
-    <link rel="icon" href="favicon.ico" type="image/x-icon">
 <base target="_blank">
 <base target="_blank">
 </head>
@@ -107,7 +107,7 @@
 
                         <div class="params-section">
                             <button class="params-toggle" id="paramsToggle">
-                                ⚙️ Расширенные параметры ASR
+                                ⚙️ Расширенные параметры
                                 <span class="chevron" id="paramsChevron">▼</span>
                             </button>
                             <div class="params-body" id="paramsBody" style="display:none">
@@ -126,6 +126,11 @@
                                         <option value="en">English</option>
                                         <option value="auto">Автоопределение</option>
                                     </select>
+                                </div>
+                                <div class="param-row" id="llmModelRow" style="display:none">
+                                    <label>Модель LLM (резюме / чат)</label>
+                                    <select id="llmModelSelect"></select>
+                                    <span class="param-hint" id="llmModelHint">Загрузка моделей...</span>
                                 </div>
                             </div>
                         </div>
@@ -168,6 +173,12 @@
 
                     <!-- Транскрипция -->
                     <div class="tab-content active" id="tabTranscriptContent">
+                        <div class="content-toolbar" id="transcriptToolbar">
+                            <button class="btn btn-small" id="editTranscriptBtn">✏️ Редактировать</button>
+                            <button class="btn btn-small" id="saveTranscriptBtn" style="display:none">💾 Сохранить</button>
+                            <button class="btn btn-small" id="copyTranscriptBtn">📋 Копировать</button>
+                            <button class="btn btn-small" id="downloadTranscriptWordBtn">📄 Word</button>
+                        </div>
                         <div class="view-content" id="transcriptContent">
                             <pre id="viewText"></pre>
                         </div>
@@ -175,11 +186,30 @@
 
                     <!-- Резюме -->
                     <div class="tab-content" id="tabSummaryContent">
+                        <div class="content-toolbar" id="summaryToolbar">
+                            <button class="btn btn-small" id="editSummaryBtn">✏️ Редактировать</button>
+                            <button class="btn btn-small" id="saveSummaryBtn" style="display:none">💾 Сохранить</button>
+                            <button class="btn btn-small" id="copySummaryBtn">📋 Копировать</button>
+                            <button class="btn btn-small" id="downloadSummaryWordBtn">📄 Word</button>
+                        </div>
                         <div class="summary-actions" id="summaryActions">
                             <button class="btn btn-primary" id="generateSummaryBtn">🤖 Сгенерировать резюме (LLM)</button>
                             <span class="summary-hint" id="summaryHint">Требуется API ключ в настройках Amvera (LLM_API_KEY)</span>
                         </div>
-                        <div class="summary-content markdown-body" id="summaryContent"></div>
+                        <div class="summary-content markdown-body" id="summaryContent" contenteditable="false"></div>
+
+                        <!-- Чат с транскрипцией -->
+                        <div class="chat-section" id="chatSection" style="display:none">
+                            <div class="chat-header">
+                                <span>💬 Чат с транскрипцией</span>
+                                <span class="chat-hint">Задавайте вопросы об этой записи</span>
+                            </div>
+                            <div class="chat-messages" id="chatMessages"></div>
+                            <div class="chat-input-wrap">
+                                <textarea id="chatInput" placeholder="Задайте вопрос об этой записи... (Enter для отправки, Ctrl+Enter для новой строки)"></textarea>
+                                <button class="btn btn-primary" id="chatSendBtn">➤</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
