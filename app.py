@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 700 * 1024 * 1024
 
 # --- Конфигурация ---
 DATA_DIR = Path("/app/data")
@@ -33,7 +33,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 MODEL_SIZE = "small"
 COMPUTE_TYPE = "int8"
-MAX_FILE_SIZE_MB = 500
+MAX_FILE_SIZE_MB = 700
 ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".ogg"}
 RETENTION_HOURS = 8
 SPEAKER_GAP_SECONDS = 1.2
@@ -315,7 +315,7 @@ def static_files(filename):
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "model": MODEL_SIZE, "retention_hours": RETENTION_HOURS})
+    return jsonify({"status": "ok", "model": MODEL_SIZE, "retention_hours": RETENTION_HOURS, "max_file_size_mb": MAX_FILE_SIZE_MB})
 
 @app.route("/api/jobs")
 def list_jobs():
