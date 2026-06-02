@@ -387,27 +387,27 @@ def status(job_id):
             "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path, audio_path, speakers_json, summary_path FROM jobs WHERE id=? AND user_id=?",
             (job_id, uid)
         ).fetchone()
-        if not row:
-            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
-        d = dict(row)
-        result = {
-            "job_id": job_id, "status": d["status"],
-            "created_at": d["created_at"], "started_at": d["started_at"],
-            "finished_at": d["finished_at"], "error": d["error"],
-            "speakers_json": d["speakers_json"] if d["speakers_json"] else None,
-            "llm_configured": bool(LLM_API_KEY)
+    if not row:
+        return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+    d = dict(row)
+    result = {
+        "job_id": job_id, "status": d["status"],
+        "created_at": d["created_at"], "started_at": d["started_at"],
+        "finished_at": d["finished_at"], "error": d["error"],
+        "speakers_json": d["speakers_json"] if d["speakers_json"] else None,
+        "llm_configured": bool(LLM_API_KEY)
+    }
+    if d["status"] == "done":
+        result["files"] = {
+            "txt": f"/api/download/{job_id}?format=txt",
+            "srt": f"/api/download/{job_id}?format=srt",
+            "audio": f"/api/audio/{job_id}"
         }
-        if d["status"] == "done":
-            result["files"] = {
-                "txt": f"/api/download/{job_id}?format=txt",
-                "srt": f"/api/download/{job_id}?format=srt",
-                "audio": f"/api/audio/{job_id}"
-            }
-            if d["summary_path"] and Path(d["summary_path"]).exists():
-                result["summary_ready"] = True
-                result["summary"] = Path(d["summary_path"]).read_text(encoding="utf-8")
-            spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
-            result["speakers"] = {str(num): name for num, name in spk_rows}
+        if d["summary_path"] and Path(d["summary_path"]).exists():
+            result["summary_ready"] = True
+            result["summary"] = Path(d["summary_path"]).read_text(encoding="utf-8")
+        spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
+        result["speakers"] = {str(num): name for num, name in spk_rows}
     return jsonify(result)
 
 @app.route("/api/audio/<job_id>")
@@ -422,7 +422,7 @@ def audio(job_id):
     path = Path(row[0])
     if not path.exists():
         return jsonify({"status": "error", "msg": "Аудио удалено"}), 404
-    return send_file(path, mimetype="audio/wav", conditional=True)
+    return send_file(path, mimetype="audio/wav")
 
 @app.route("/api/jobs/<job_id>/speakers", methods=["POST"])
 def update_speakers(job_id):
