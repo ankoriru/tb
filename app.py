@@ -6,6 +6,8 @@
 - Автоудаление файлов старше 8 часов
 - Разделение по спикерам (эвристика по паузам)
 - Переименование спикеров после обработки
+- Аудио-плеер по клику на реплику
+- Резюме через LLM (OpenAI-совместимый API)
 """
 
 import os
@@ -16,12 +18,18 @@ import subprocess
 import tempfile
 import time
 import json
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+
+# --- LLM конфигурация (пользователь добавляет ключ в env) ---
+LLM_API_KEY = os.environ.get('LLM_API_KEY', '')
+LLM_API_URL = os.environ.get('LLM_API_URL', 'https://api.openai.com/v1/chat/completions')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'gpt-4o-mini')
 
 # --- Конфигурация ---
 DATA_DIR = Path("/app/data")
@@ -72,6 +80,8 @@ def init_db():
                 error TEXT,
                 txt_path TEXT,
                 srt_path TEXT,
+                audio_path TEXT,
+                summary_path TEXT,
                 tags TEXT,
                 speakers_json TEXT
             )
@@ -84,25 +94,27 @@ def init_db():
                 PRIMARY KEY (job_id, speaker_num)
             )
         """)
-        try:
-            conn.execute("SELECT speakers_json FROM jobs LIMIT 1")
-        except sqlite3.OperationalError:
-            conn.execute("ALTER TABLE jobs ADD COLUMN speakers_json TEXT")
+        # Миграции
+        for col in ['audio_path', 'summary_path']:
+            try:
+                conn.execute(f"SELECT {col} FROM jobs LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)")
         conn.commit()
 
 init_db()
 
-# --- Ротация: удаление старше 8 часов ---
+# --- Ротация ---
 def cleanup_old_files():
     cutoff = (datetime.now() - timedelta(hours=RETENTION_HOURS)).isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, user_id, txt_path, srt_path FROM jobs WHERE created_at < ?", (cutoff,)
+            "SELECT id, user_id, txt_path, srt_path, audio_path, summary_path FROM jobs WHERE created_at < ?", (cutoff,)
         ).fetchall()
-        for job_id, uid, txt, srt in rows:
-            for p in (txt, srt):
+        for job_id, uid, txt, srt, audio, summary in rows:
+            for p in (txt, srt, audio, summary):
                 if p:
                     try: Path(p).unlink(missing_ok=True)
                     except: pass
@@ -176,8 +188,8 @@ def diarize_segments(segments, gap=SPEAKER_GAP_SECONDS):
         result.append({
             "speaker": current_speaker,
             "text": seg.text.strip(),
-            "start": seg.start,
-            "end": seg.end
+            "start": round(seg.start, 2),
+            "end": round(seg.end, 2)
         })
         last_end = seg.end
     return result
@@ -209,38 +221,38 @@ def process_job(job_id: str, uid: str, video_path: Path):
 
         model = get_model()
 
-        with tempfile.TemporaryDirectory(dir=u_result) as tmpdir:
-            wav_path = Path(tmpdir) / "audio.wav"
-            extract_audio(video_path, wav_path)
+        # Сохраняем аудио в results для воспроизведения
+        audio_path = u_result / f"{job_id}_audio.wav"
+        extract_audio(video_path, audio_path)
 
-            segments, info = model.transcribe(
-                str(wav_path), language="ru", beam_size=5,
-                vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500)
+        segments, info = model.transcribe(
+            str(audio_path), language="ru", beam_size=5,
+            vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500)
+        )
+
+        speaker_segments = diarize_segments(list(segments))
+        speakers_json = json.dumps(speaker_segments, ensure_ascii=False)
+
+        unique_speakers = sorted({s["speaker"] for s in speaker_segments})
+        for spk in unique_speakers:
+            conn.execute(
+                "INSERT OR IGNORE INTO speakers (job_id, speaker_num, name) VALUES (?, ?, ?)",
+                (job_id, spk, f"Спикер {spk}")
             )
+        conn.commit()
 
-            speaker_segments = diarize_segments(list(segments))
-            speakers_json = json.dumps(speaker_segments, ensure_ascii=False)
+        speaker_names = {str(spk): f"Спикер {spk}" for spk in unique_speakers}
 
-            unique_speakers = sorted({s["speaker"] for s in speaker_segments})
-            for spk in unique_speakers:
-                conn.execute(
-                    "INSERT OR IGNORE INTO speakers (job_id, speaker_num, name) VALUES (?, ?, ?)",
-                    (job_id, spk, f"Спикер {spk}")
-                )
-            conn.commit()
+        base = u_result / job_id
+        txt_file = base.with_suffix(".txt")
+        srt_file = base.with_suffix(".srt")
 
-            speaker_names = {str(spk): f"Спикер {spk}" for spk in unique_speakers}
-
-            base = u_result / job_id
-            txt_file = base.with_suffix(".txt")
-            srt_file = base.with_suffix(".srt")
-
-            txt_file.write_text(build_txt(speaker_segments, speaker_names), encoding="utf-8")
-            srt_file.write_text(build_srt(speaker_segments, speaker_names), encoding="utf-8")
+        txt_file.write_text(build_txt(speaker_segments, speaker_names), encoding="utf-8")
+        srt_file.write_text(build_srt(speaker_segments, speaker_names), encoding="utf-8")
 
         conn.execute(
-            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=?, speakers_json=? WHERE id=? AND user_id=?",
-            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), speakers_json, job_id, uid)
+            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=?, audio_path=?, speakers_json=? WHERE id=? AND user_id=?",
+            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), str(audio_path), speakers_json, job_id, uid)
         )
         conn.commit()
 
@@ -315,7 +327,13 @@ def static_files(filename):
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "model": MODEL_SIZE, "retention_hours": RETENTION_HOURS, "max_file_size_mb": MAX_FILE_SIZE_MB})
+    return jsonify({
+        "status": "ok",
+        "model": MODEL_SIZE,
+        "retention_hours": RETENTION_HOURS,
+        "max_file_size_mb": MAX_FILE_SIZE_MB,
+        "llm_configured": bool(LLM_API_KEY)
+    })
 
 @app.route("/api/jobs")
 def list_jobs():
@@ -344,7 +362,7 @@ def upload():
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_FILE_SIZE_MB:
-        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ > {MAX_FILE_SIZE_MB})"}), 400
+        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ). Максимальный размер: {MAX_FILE_SIZE_MB} МБ. Разбейте видео на части или сожмите его."}), 400
 
     job_id = str(uuid.uuid4())[:12]
     safe_name = Path(file.filename).name.replace(" ", "_")
@@ -366,7 +384,7 @@ def status(job_id):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path FROM jobs WHERE id=? AND user_id=?",
+            "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path, audio_path, speakers_json, summary_path FROM jobs WHERE id=? AND user_id=?",
             (job_id, uid)
         ).fetchone()
     if not row:
@@ -375,16 +393,36 @@ def status(job_id):
     result = {
         "job_id": job_id, "status": d["status"],
         "created_at": d["created_at"], "started_at": d["started_at"],
-        "finished_at": d["finished_at"], "error": d["error"]
+        "finished_at": d["finished_at"], "error": d["error"],
+        "speakers_json": d["speakers_json"] if d["speakers_json"] else None,
+        "llm_configured": bool(LLM_API_KEY)
     }
     if d["status"] == "done":
         result["files"] = {
             "txt": f"/api/download/{job_id}?format=txt",
-            "srt": f"/api/download/{job_id}?format=srt"
+            "srt": f"/api/download/{job_id}?format=srt",
+            "audio": f"/api/audio/{job_id}"
         }
+        if d["summary_path"] and Path(d["summary_path"]).exists():
+            result["summary_ready"] = True
+            result["summary"] = Path(d["summary_path"]).read_text(encoding="utf-8")
         spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
         result["speakers"] = {str(num): name for num, name in spk_rows}
     return jsonify(result)
+
+@app.route("/api/audio/<job_id>")
+def audio(job_id):
+    uid = get_user_id()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT audio_path, status FROM jobs WHERE id=? AND user_id=?", (job_id, uid)
+        ).fetchone()
+    if not row or row[1] != "done":
+        return jsonify({"status": "error", "msg": "Аудио не готово"}), 400
+    path = Path(row[0])
+    if not path.exists():
+        return jsonify({"status": "error", "msg": "Аудио удалено"}), 404
+    return send_file(path, mimetype="audio/wav", conditional=True)
 
 @app.route("/api/jobs/<job_id>/speakers", methods=["POST"])
 def update_speakers(job_id):
@@ -426,11 +464,91 @@ def download(job_id):
         return jsonify({"status": "error", "msg": "Файл удалён"}), 404
     return send_file(path, as_attachment=True)
 
+@app.route("/api/jobs/<job_id>/summary", methods=["POST"])
+def generate_summary(job_id):
+    uid = get_user_id()
+    if not LLM_API_KEY:
+        return jsonify({"status": "error", "msg": "LLM API ключ не настроен. Добавьте переменную окружения LLM_API_KEY в настройках Amvera."}), 503
+
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT txt_path, summary_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)
+        ).fetchone()
+    if not row or not row[0]:
+        return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
+
+    txt_path = Path(row[0])
+    summary_path = Path(row[1]) if row[1] else None
+
+    if not txt_path.exists():
+        return jsonify({"status": "error", "msg": "Текст не найден"}), 404
+
+    # Если резюме уже есть — вернуть его
+    if summary_path and summary_path.exists():
+        return jsonify({"status": "ok", "summary": summary_path.read_text(encoding="utf-8"), "cached": True})
+
+    text = txt_path.read_text(encoding="utf-8")
+    # Ограничение ~4000 токенов ≈ 12000 символов для gpt-4o-mini
+    if len(text) > 12000:
+        text = text[:12000] + "\n\n[...текст обрезан для анализа...]"
+
+    prompt = """Проанализируй следующую расшифровку совещания и составь структурированное резюме на русском языке.
+
+Формат ответа (markdown):
+
+## Ключевые вопросы и темы
+- Краткий перечень основных тем обсуждения
+
+## Принятые решения
+- Что решено, какие договоренности достигнуты
+
+## План действий по задачам и поручениям
+| Задача / Поручение | Ответственный | Срок / Дедлайн |
+|-------------------|---------------|----------------|
+| ... | ... | ... |
+
+## Открытые вопросы и риски
+- Что осталось нерешенным, потенциальные риски
+
+## Итог одним абзацем
+Краткое содержание всего совещания одним связным абзацем.
+
+Расшифровка:
+""" + text
+
+    try:
+        import requests as req
+        r = req.post(LLM_API_URL, headers={
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "Content-Type": "application/json"
+        }, json={
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": 4000
+        }, timeout=180)
+        r.raise_for_status()
+        summary = r.json()["choices"][0]["message"]["content"]
+
+        # Сохраняем
+        _, u_result = user_dirs(uid)
+        summary_file = u_result / f"{job_id}_summary.md"
+        summary_file.write_text(summary, encoding="utf-8")
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("UPDATE jobs SET summary_path=? WHERE id=? AND user_id=?",
+                         (str(summary_file), job_id, uid))
+            conn.commit()
+
+        return jsonify({"status": "ok", "summary": summary})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
+
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
     uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT txt_path, srt_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
+        row = conn.execute("SELECT txt_path, srt_path, audio_path, summary_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
         if row:
             for p in row:
                 if p:
@@ -445,43 +563,32 @@ def delete_job(job_id):
 
 @app.route("/api/jobs", methods=["DELETE"])
 def delete_all_jobs():
-    """Удалить все задачи и файлы текущего пользователя."""
     import shutil
     uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT id, filename, txt_path, srt_path FROM jobs WHERE user_id=?", (uid,)
+            "SELECT id, txt_path, srt_path, audio_path, summary_path FROM jobs WHERE user_id=?", (uid,)
         ).fetchall()
-        for job_id, filename, txt, srt in rows:
-            # удалить результаты
-            for p in (txt, srt):
+        for job_id, txt, srt, audio, summary in rows:
+            for p in (txt, srt, audio, summary):
                 if p:
                     try: Path(p).unlink(missing_ok=True)
-                    except Exception: pass
-            # удалить исходный upload-файл по шаблону
-            if filename:
-                u_upload = UPLOAD_DIR / uid
-                for pattern in [f"{job_id}_{filename}", filename]:
-                    fp = u_upload / pattern
-                    if fp.exists():
-                        try: fp.unlink()
-                        except Exception: pass
+                    except: pass
             conn.execute("DELETE FROM speakers WHERE job_id=?", (job_id,))
         conn.execute("DELETE FROM jobs WHERE user_id=?", (uid,))
         conn.commit()
-    # полная очистка директорий пользователя
     u_upload = UPLOAD_DIR / uid
     u_result = RESULT_DIR / uid
     if u_upload.exists():
         try: shutil.rmtree(str(u_upload))
-        except Exception: pass
+        except: pass
         try: u_upload.mkdir(parents=True, exist_ok=True)
-        except Exception: pass
+        except: pass
     if u_result.exists():
         try: shutil.rmtree(str(u_result))
-        except Exception: pass
+        except: pass
         try: u_result.mkdir(parents=True, exist_ok=True)
-        except Exception: pass
+        except: pass
     return jsonify({"status": "ok", "msg": "Все задачи и файлы удалены", "deleted_count": len(rows)})
 
 if __name__ == "__main__":
