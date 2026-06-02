@@ -374,6 +374,28 @@
         }
     });
 
+    // --- Очистить все ---
+    const clearAllBtn = document.getElementById('clearAllBtn');
+    if (clearAllBtn) {
+        clearAllBtn.addEventListener('click', async () => {
+            if (!confirm('⚠️ ВНИМАНИЕ\n\nВсе загруженные файлы, результаты транскрибации и записи будут безвозвратно удалены.\n\nПродолжить?')) return;
+            try {
+                const r = await fetch(API + '/api/jobs', {
+                    method: 'DELETE',
+                    headers: { 'X-User-ID': USER_ID }
+                });
+                if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                const data = await r.json();
+                toast(data.msg || 'Все задачи удалены', 'success');
+                currentJobId = null;
+                currentSpeakers = {};
+                showUpload();
+            } catch(e) {
+                toast('Ошибка очистки: ' + e.message, 'error');
+            }
+        });
+    }
+
     els.downloadTxtBtn.addEventListener('click', () => {
         if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt', '_blank');
     });
