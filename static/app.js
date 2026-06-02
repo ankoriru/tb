@@ -1,6 +1,6 @@
 (function(){
     'use strict';
-    console.log('[APP] Script loaded v4');
+    console.log('[APP] Script loaded v5');
 
     var USER_ID = localStorage.getItem('whisper_user_id');
     if (!USER_ID) {
@@ -24,6 +24,7 @@
     var activeFilter = 'all';
     var activeTab = 'transcript';
     var MAX_FILE_SIZE_MB = 200;
+    var chatHistory = [];
 
     function $(id) {
         var el = document.getElementById(id);
@@ -64,6 +65,16 @@
     function apiPostJson(path, body) {
         return fetch(API + path, {
             method: 'POST',
+            headers: { 'X-User-ID': USER_ID, 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(function(r) {
+            if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+            return r.json();
+        });
+    }
+    function apiPatchJson(path, body) {
+        return fetch(API + path, {
+            method: 'PATCH',
             headers: { 'X-User-ID': USER_ID, 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         }).then(function(r) {
@@ -136,6 +147,47 @@
                 card.addEventListener('click', function() { openJob(card.dataset.id); });
             });
         }
+    }
+
+    // --- LLM Models ---
+    function loadModels() {
+        apiGet('/api/models').then(function(data) {
+            var select = $('llmModelSelect');
+            var row = $('llmModelRow');
+            var hint = $('llmModelHint');
+            if (!select || !row) return;
+            if (data.models && data.models.length) {
+                row.style.display = '';
+                if (hint) hint.style.display = 'none';
+                select.innerHTML = data.models.map(function(m) {
+                    return '<option value="' + esc(m) + '">' + esc(m) + '</option>';
+                }).join('');
+                // Восстановить сохранённую или выбрать первую
+                var saved = localStorage.getItem('llm_model');
+                if (saved && data.models.indexOf(saved) !== -1) {
+                    select.value = saved;
+                } else {
+                    select.selectedIndex = 0;
+                    localStorage.setItem('llm_model', select.value);
+                }
+                select.addEventListener('change', function() {
+                    localStorage.setItem('llm_model', select.value);
+                });
+            } else {
+                if (hint) hint.textContent = data.error || 'Модели не загружены';
+            }
+        }).catch(function(e) {
+            var row = $('llmModelRow');
+            var hint = $('llmModelHint');
+            if (row) row.style.display = '';
+            if (hint) hint.textContent = 'LLM не настроен';
+        });
+    }
+
+    function getSelectedModel() {
+        var sel = $('llmModelSelect');
+        if (sel && sel.value) return sel.value;
+        return localStorage.getItem('llm_model') || '';
     }
 
     // --- View job ---
@@ -215,6 +267,23 @@
                 } else {
                     if (summaryContent) summaryContent.innerHTML = '';
                 }
+                // Сброс редактирования резюме
+                if (summaryContent) summaryContent.contentEditable = 'false';
+                var esb = $('editSummaryBtn');
+                var ssb = $('saveSummaryBtn');
+                if (esb) esb.style.display = '';
+                if (ssb) ssb.style.display = 'none';
+
+                // Чат
+                var chatSection = $('chatSection');
+                if (chatSection) {
+                    if (j.llm_configured) {
+                        chatSection.style.display = 'block';
+                        loadChat(id);
+                    } else {
+                        chatSection.style.display = 'none';
+                    }
+                }
 
                 var dtb = $('downloadTxtBtn');
                 var dsb = $('downloadSrtBtn');
@@ -233,6 +302,8 @@
                 var dsb = $('downloadSrtBtn');
                 if (dtb) dtb.style.display = 'none';
                 if (dsb) dsb.style.display = 'none';
+                var chatSection = $('chatSection');
+                if (chatSection) chatSection.style.display = 'none';
             } else {
                 var tc = $('transcriptContent');
                 if (tc) tc.innerHTML = '<pre>Обработка... Пожалуйста, подождите. Автообновление каждые 5 сек.</pre>';
@@ -246,6 +317,8 @@
                 var dsb = $('downloadSrtBtn');
                 if (dtb) dtb.style.display = 'none';
                 if (dsb) dsb.style.display = 'none';
+                var chatSection = $('chatSection');
+                if (chatSection) chatSection.style.display = 'none';
             }
             loadJobs();
         }).catch(function(e) {
@@ -282,7 +355,6 @@
         if (!container) return;
         if (!segments || !segments.length) {
             container.innerHTML = '<pre id="viewText"></pre>';
-            // fallback: загрузить txt
             if (currentJobId) {
                 fetch(API + '/api/download/' + currentJobId + '?format=txt', { headers: { 'X-User-ID': USER_ID } })
                     .then(function(r) { return r.text(); })
@@ -319,7 +391,6 @@
         ap.play().catch(function(e) {
             console.error('Audio play error:', e);
         });
-        // Авто-стоп по end
         var stopAt = end;
         var checkInterval = setInterval(function() {
             if (ap.currentTime >= stopAt || ap.paused) {
@@ -348,6 +419,69 @@
         }
     }
 
+    // --- Chat ---
+    function loadChat(jobId) {
+        apiGet('/api/jobs/' + jobId + '/chat').then(function(data) {
+            chatHistory = data.messages || [];
+            renderChat();
+        }).catch(function(e) {
+            console.error('Chat load error:', e);
+        });
+    }
+
+    function renderChat() {
+        var container = $('chatMessages');
+        if (!container) return;
+        if (!chatHistory.length) {
+            container.innerHTML = '<div style="text-align:center;color:var(--text-secondary);font-size:13px;padding:20px;">Задайте первый вопрос об этой записи</div>';
+            return;
+        }
+        container.innerHTML = chatHistory.map(function(msg) {
+            var isUser = msg.role === 'user';
+            var avatar = isUser ? '👤' : '🤖';
+            var cls = isUser ? 'user' : 'assistant';
+            return '<div class="chat-message ' + cls + '">' +
+                '<div class="chat-avatar">' + avatar + '</div>' +
+                '<div class="chat-bubble">' + esc(msg.content) + '</div>' +
+                '</div>';
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function sendChat() {
+        if (!currentJobId) return;
+        var input = $('chatInput');
+        var btn = $('chatSendBtn');
+        if (!input || !input.value.trim()) return;
+        var msg = input.value.trim();
+        input.value = '';
+        if (btn) btn.disabled = true;
+
+        chatHistory.push({role: 'user', content: msg});
+        renderChat();
+
+        apiPostJson('/api/jobs/' + currentJobId + '/chat', {
+            message: msg,
+            model: getSelectedModel()
+        }).then(function(data) {
+            if (data.status === 'ok' && data.message) {
+                chatHistory.push({role: 'assistant', content: data.message});
+                renderChat();
+            } else {
+                chatHistory.push({role: 'assistant', content: 'Ошибка: ' + (data.msg || 'Неизвестная ошибка')});
+                renderChat();
+                toast('Ошибка чата: ' + (data.msg || ''), 'error');
+            }
+            if (btn) btn.disabled = false;
+        }).catch(function(e) {
+            chatHistory.push({role: 'assistant', content: 'Ошибка сети: ' + e.message});
+            renderChat();
+            toast('Ошибка чата: ' + e.message, 'error');
+            if (btn) btn.disabled = false;
+        });
+    }
+
+    // --- Summary ---
     function generateSummary() {
         if (!currentJobId) return;
         var btn = $('generateSummaryBtn');
@@ -358,7 +492,9 @@
         }
         if (content) content.innerHTML = '<div style="text-align:center;padding:40px"><span class="spinner"></span><p>Анализируем транскрипцию через LLM...</p><p style="font-size:12px;color:var(--text-secondary)">Это может занять 30–60 секунд</p></div>';
 
-        apiPostJson('/api/jobs/' + currentJobId + '/summary', {}).then(function(data) {
+        apiPostJson('/api/jobs/' + currentJobId + '/summary', {
+            model: getSelectedModel()
+        }).then(function(data) {
             if (data.summary) {
                 if (content) content.innerHTML = markdownToHtml(data.summary);
                 var actions = $('summaryActions');
@@ -366,6 +502,7 @@
                 toast('Резюме сгенерировано', 'success');
             } else {
                 if (content) content.innerHTML = '<p>Ошибка: ' + esc(data.msg) + '</p>';
+                toast('Ошибка генерации: ' + data.msg, 'error');
             }
             if (btn) {
                 btn.disabled = false;
@@ -381,21 +518,111 @@
         });
     }
 
-    // Простой markdown → html
+    // --- Edit / Copy / Word ---
+    function toggleEdit(type) {
+        var content, editBtn, saveBtn;
+        if (type === 'transcript') {
+            content = $('transcriptContent');
+            editBtn = $('editTranscriptBtn');
+            saveBtn = $('saveTranscriptBtn');
+        } else {
+            content = $('summaryContent');
+            editBtn = $('editSummaryBtn');
+            saveBtn = $('saveSummaryBtn');
+        }
+        if (!content) return;
+        var isEditing = content.contentEditable === 'true';
+        if (isEditing) {
+            content.contentEditable = 'false';
+            if (editBtn) editBtn.style.display = '';
+            if (saveBtn) saveBtn.style.display = 'none';
+        } else {
+            content.contentEditable = 'true';
+            content.focus();
+            if (editBtn) editBtn.style.display = 'none';
+            if (saveBtn) saveBtn.style.display = '';
+            toast('Режим редактирования. Нажмите Сохранить чтобы применить изменения.', 'info');
+        }
+    }
+
+    function saveEdit(type) {
+        var content;
+        if (type === 'transcript') {
+            content = $('transcriptContent');
+        } else {
+            content = $('summaryContent');
+        }
+        if (!content || !currentJobId) return;
+        var text = type === 'transcript' ? content.innerText : content.innerText;
+        apiPatchJson('/api/jobs/' + currentJobId + '/content', {
+            type: type,
+            text: text
+        }).then(function() {
+            toast('Изменения сохранены', 'success');
+            toggleEdit(type);
+            if (type === 'summary') {
+                // Перезагрузим чтобы обновить summary в статусе
+                openJob(currentJobId);
+            }
+        }).catch(function(e) {
+            toast('Ошибка сохранения: ' + e.message, 'error');
+        });
+    }
+
+    function copyContent(type) {
+        var content;
+        if (type === 'transcript') {
+            content = $('transcriptContent');
+        } else {
+            content = $('summaryContent');
+        }
+        if (!content) return;
+        var text = content.innerText;
+        navigator.clipboard.writeText(text).then(function() {
+            toast('Скопировано в буфер обмена', 'success');
+        }).catch(function() {
+            // Fallback
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            toast('Скопировано в буфер обмена', 'success');
+        });
+    }
+
+    function downloadWord(type) {
+        var content, title;
+        if (type === 'transcript') {
+            content = $('transcriptContent');
+            title = 'Транскрипция ' + currentJobId;
+        } else {
+            content = $('summaryContent');
+            title = 'Резюме ' + currentJobId;
+        }
+        if (!content) return;
+        var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>' + esc(title) + '</title></head><body>' + content.innerHTML + '</body></html>';
+        var blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = title + '.doc';
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // --- Markdown ---
     function markdownToHtml(md) {
         if (!md) return '';
         var html = esc(md);
-        // Заголовки ##
         html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
         html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-        // Жирный
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        // Списки
         html = html.replace(/^\- (.*$)/gim, '<li>$1</li>');
         html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
             return '<ul>' + match + '</ul>';
         });
-        // Таблицы (простые)
         if (html.indexOf('|') !== -1) {
             var lines = html.split('\n');
             var inTable = false;
@@ -409,7 +636,6 @@
                             inTable = true;
                             tableHtml = '<table>';
                         }
-                        // Пропускаем строку разделителя ---
                         if (cells.every(function(c) { return c.replace(/-/g,'') === ''; })) return;
                         tableHtml += '<tr>' + cells.map(function(c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>';
                         return;
@@ -429,10 +655,8 @@
             }
             html = result.join('\n');
         }
-        // Абзацы
         html = html.replace(/\n\n/g, '</p><p>');
         html = '<p>' + html + '</p>';
-        // Убрать пустые p
         html = html.replace(/<p><\/p>/g, '');
         html = html.replace(/<p>(<h[23]>.*?<\/h[23]>)<\/p>/g, '$1');
         html = html.replace(/<p>(<table>.*?<\/table>)<\/p>/g, '$1');
@@ -460,6 +684,7 @@
         currentSegments = [];
         editingSpeakers = false;
         activeTab = 'transcript';
+        chatHistory = [];
         var vs = $('viewScreen');
         var us = $('uploadScreen');
         if (vs) vs.style.display = 'none';
@@ -713,6 +938,26 @@
     on('tabSummary', 'click', function() { switchTab('summary'); });
     on('generateSummaryBtn', 'click', generateSummary);
 
+    // Edit / Copy / Word events
+    on('editTranscriptBtn', 'click', function() { toggleEdit('transcript'); });
+    on('saveTranscriptBtn', 'click', function() { saveEdit('transcript'); });
+    on('copyTranscriptBtn', 'click', function() { copyContent('transcript'); });
+    on('downloadTranscriptWordBtn', 'click', function() { downloadWord('transcript'); });
+
+    on('editSummaryBtn', 'click', function() { toggleEdit('summary'); });
+    on('saveSummaryBtn', 'click', function() { saveEdit('summary'); });
+    on('copySummaryBtn', 'click', function() { copyContent('summary'); });
+    on('downloadSummaryWordBtn', 'click', function() { downloadWord('summary'); });
+
+    // Chat events
+    on('chatSendBtn', 'click', sendChat);
+    on('chatInput', 'keydown', function(e) {
+        if (e.key === 'Enter' && !e.ctrlKey) {
+            e.preventDefault();
+            sendChat();
+        }
+    });
+
     on('paramsToggle', 'click', function() {
         var body = $('paramsBody');
         var toggle = $('paramsToggle');
@@ -752,6 +997,7 @@
             currentSegments = [];
             editingSpeakers = false;
             activeTab = 'transcript';
+            chatHistory = [];
             showUpload();
         }).catch(function(e) {
             toast('Ошибка очистки: ' + e.message, 'error');
@@ -776,6 +1022,9 @@
             MAX_FILE_SIZE_MB = data.max_file_size_mb;
             var lbl = $('maxSizeLabel');
             if (lbl) lbl.textContent = MAX_FILE_SIZE_MB + ' МБ';
+        }
+        if (data.llm_configured) {
+            loadModels();
         }
     }).catch(function() {});
     loadJobs();
