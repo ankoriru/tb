@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Оффлайн транскрибатор видео для Amvera с веб-интерфейсом.
-Все кэши пишутся в /app/data (Persistent Volume).
-Модель грузится лениво — только при первой задаче.
+Оффлайн транскрибатор видео для Amvera.
+- Изоляция по пользователям (X-User-ID)
+- Автоудаление файлов и записей старше 48 часов
 """
 
 import os
-import sys
 import uuid
 import sqlite3
 import threading
@@ -15,10 +14,11 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_file, send_from_directory
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 
 # --- Конфигурация ---
 DATA_DIR = Path("/app/data")
@@ -30,25 +30,30 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 MODEL_SIZE = "small"
 COMPUTE_TYPE = "int8"
-MAX_FILE_SIZE_MB = 100
-ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".webm", ".ogg"}
+MAX_FILE_SIZE_MB = 500
+ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".ogg"}
+RETENTION_HOURS = 48
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- Проверка Persistent Volume при старте ---
-def check_volume():
-    test_file = DATA_DIR / ".write_test"
-    try:
-        test_file.write_text("ok")
-        test_file.unlink()
-        return True
-    except Exception as e:
-        print(f"❌ Persistent Volume {DATA_DIR} НЕ доступен: {e}")
-        return False
+# --- Helpers ---
+def get_user_id():
+    """Извлекает user_id из заголовка X-User-ID или генерирует новый."""
+    uid = request.headers.get('X-User-ID', '') or request.args.get('user_id', '')
+    if not uid or len(uid) > 64:
+        uid = str(uuid.uuid4())[:16]
+    # sanitize: только буквы, цифры, дефис
+    uid = ''.join(c for c in uid if c.isalnum() or c == '-')
+    return uid or 'anonymous'
 
-volume_ok = check_volume()
+def user_dirs(uid):
+    u_upload = UPLOAD_DIR / uid
+    u_result = RESULT_DIR / uid
+    u_upload.mkdir(parents=True, exist_ok=True)
+    u_result.mkdir(parents=True, exist_ok=True)
+    return u_upload, u_result
 
 # --- Инициализация БД ---
 def init_db():
@@ -56,6 +61,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
                 filename TEXT,
                 status TEXT DEFAULT 'pending',
                 created_at TEXT,
@@ -67,10 +73,56 @@ def init_db():
                 tags TEXT
             )
         """)
+        # Миграция: добавить user_id если таблица старая
+        try:
+            conn.execute("SELECT user_id FROM jobs LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE jobs ADD COLUMN user_id TEXT DEFAULT 'legacy'")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)")
+        conn.commit()
 
 init_db()
 
-# --- Ленивая загрузка модели (только при первой задаче) ---
+# --- Ротация: удаление старше 48 часов ---
+def cleanup_old_files():
+    """Удаляет файлы и записи старше RETENTION_HOURS."""
+    cutoff = (datetime.now() - timedelta(hours=RETENTION_HOURS)).isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT id, user_id, txt_path, srt_path FROM jobs WHERE created_at < ?",
+            (cutoff,)
+        ).fetchall()
+        for job_id, uid, txt, srt in rows:
+            for p in (txt, srt):
+                if p:
+                    try:
+                        Path(p).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            # очистка upload-файлов этого пользователя старше cutoff
+            u_upload, _ = user_dirs(uid)
+            for f in u_upload.iterdir():
+                try:
+                    if f.stat().st_mtime < (datetime.now() - timedelta(hours=RETENTION_HOURS)).timestamp():
+                        f.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
+        conn.commit()
+    print(f"🧹 Ротация выполнена. Удалены записи старше {RETENTION_HOURS}ч.")
+
+def cleaner_loop():
+    while True:
+        time.sleep(3600)  # раз в час
+        try:
+            cleanup_old_files()
+        except Exception as e:
+            print(f"Ошибка ротации: {e}")
+
+threading.Thread(target=cleaner_loop, daemon=True).start()
+
+# --- Ленивая загрузка модели ---
 _model = None
 _model_lock = threading.Lock()
 
@@ -80,9 +132,7 @@ def get_model():
         with _model_lock:
             if _model is None:
                 from faster_whisper import WhisperModel
-                print("⏳ Загрузка / скачивание модели Whisper small...")
-                print(f"   Кэш HF: {os.environ.get('HF_HOME')}")
-                print(f"   HOME: {os.environ.get('HOME')}")
+                print("⏳ Загрузка модели Whisper small...")
                 _model = WhisperModel(
                     MODEL_SIZE,
                     device="cpu",
@@ -111,17 +161,18 @@ def seconds_to_srt_time(seconds: float) -> str:
     millis = int((seconds - int(seconds)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-def process_job(job_id: str, video_path: Path):
+def process_job(job_id: str, uid: str, video_path: Path):
     """Фоновая обработка одного видео."""
+    _, u_result = user_dirs(uid)
     conn = sqlite3.connect(DB_PATH)
     try:
-        conn.execute("UPDATE jobs SET status=?, started_at=? WHERE id=?",
-                     ("processing", datetime.now().isoformat(), job_id))
+        conn.execute("UPDATE jobs SET status=?, started_at=? WHERE id=? AND user_id=?",
+                     ("processing", datetime.now().isoformat(), job_id, uid))
         conn.commit()
 
         model = get_model()
 
-        with tempfile.TemporaryDirectory(dir=UPLOAD_DIR) as tmpdir:
+        with tempfile.TemporaryDirectory(dir=u_result) as tmpdir:
             wav_path = Path(tmpdir) / "audio.wav"
             extract_audio(video_path, wav_path)
 
@@ -145,7 +196,7 @@ def process_job(job_id: str, video_path: Path):
                 srt_lines.append("")
                 idx += 1
 
-            base = RESULT_DIR / job_id
+            base = u_result / job_id
             txt_file = base.with_suffix(".txt")
             srt_file = base.with_suffix(".srt")
 
@@ -153,15 +204,15 @@ def process_job(job_id: str, video_path: Path):
             srt_file.write_text("\n".join(srt_lines), encoding="utf-8")
 
         conn.execute(
-            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=? WHERE id=?",
-            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), job_id)
+            "UPDATE jobs SET status=?, finished_at=?, txt_path=?, srt_path=? WHERE id=? AND user_id=?",
+            ("done", datetime.now().isoformat(), str(txt_file), str(srt_file), job_id, uid)
         )
         conn.commit()
 
     except Exception as e:
         conn.execute(
-            "UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=?",
-            ("failed", datetime.now().isoformat(), str(e), job_id)
+            "UPDATE jobs SET status=?, finished_at=?, error=? WHERE id=? AND user_id=?",
+            ("failed", datetime.now().isoformat(), str(e), job_id, uid)
         )
         conn.commit()
     finally:
@@ -169,7 +220,7 @@ def process_job(job_id: str, video_path: Path):
             video_path.unlink()
         conn.close()
 
-# --- Фоновый воркер (1 задача, стартует через 10 сек после импорта) ---
+# --- Фоновый воркер ---
 worker_lock = threading.Lock()
 
 def worker_loop():
@@ -179,19 +230,20 @@ def worker_loop():
         with worker_lock:
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.execute(
-                    "SELECT id, filename FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1"
+                    "SELECT id, user_id, filename FROM jobs WHERE status='pending' ORDER BY created_at LIMIT 1"
                 )
                 row = cur.fetchone()
 
             if row:
-                job_id, filename = row
-                video_path = UPLOAD_DIR / f"{job_id}_{filename}"
+                job_id, uid, filename = row
+                u_upload, _ = user_dirs(uid)
+                video_path = u_upload / f"{job_id}_{filename}"
                 if video_path.exists():
-                    print(f"🔄 Обработка задачи {job_id}")
-                    process_job(job_id, video_path)
+                    print(f"🔄 Обработка задачи {job_id} (user {uid})")
+                    process_job(job_id, uid, video_path)
                 else:
-                    conn.execute("UPDATE jobs SET status=?, error=? WHERE id=?",
-                                 ("failed", "Файл не найден на диске", job_id))
+                    conn.execute("UPDATE jobs SET status=?, error=? WHERE id=? AND user_id=?",
+                                 ("failed", "Файл не найден на диске", job_id, uid))
                     conn.commit()
 
         time.sleep(5)
@@ -211,20 +263,23 @@ def static_files(filename):
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "model": MODEL_SIZE, "volume_ready": volume_ok})
+    return jsonify({"status": "ok", "model": MODEL_SIZE, "retention_hours": RETENTION_HOURS})
 
 @app.route("/api/jobs")
 def list_jobs():
+    uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, filename, status, created_at, started_at, finished_at, error, tags FROM jobs ORDER BY created_at DESC"
+            "SELECT id, filename, status, created_at, started_at, finished_at, error, tags FROM jobs WHERE user_id=? ORDER BY created_at DESC",
+            (uid,)
         ).fetchall()
     jobs = [dict(r) for r in rows]
-    return jsonify({"jobs": jobs})
+    return jsonify({"jobs": jobs, "user_id": uid})
 
 @app.route("/api/upload", methods=["POST"])
 def upload():
+    uid = get_user_id()
     if "file" not in request.files:
         return jsonify({"status": "error", "msg": "Нет файла"}), 400
 
@@ -240,33 +295,36 @@ def upload():
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_FILE_SIZE_MB:
-        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ > {MAX_FILE_SIZE_MB})"}), 400
+        return jsonify({"status": "error", "msg": f"Файл слишком большой ({size_mb:.1f} МБ > лимит {MAX_FILE_SIZE_MB} МБ)"}), 400
 
     job_id = str(uuid.uuid4())[:12]
     safe_name = Path(file.filename).name.replace(" ", "_")
-    save_path = UPLOAD_DIR / f"{job_id}_{safe_name}"
+    u_upload, _ = user_dirs(uid)
+    save_path = u_upload / f"{job_id}_{safe_name}"
     file.save(save_path)
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO jobs (id, filename, status, created_at) VALUES (?, ?, ?, ?)",
-            (job_id, safe_name, "pending", datetime.now().isoformat())
+            "INSERT INTO jobs (id, user_id, filename, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            (job_id, uid, safe_name, "pending", datetime.now().isoformat())
         )
         conn.commit()
 
     return jsonify({
         "status": "ok",
         "job_id": job_id,
-        "msg": "Файл принят в обработку. Проверяйте статус через /api/status"
+        "user_id": uid,
+        "msg": "Файл принят в обработку"
     }), 202
 
 @app.route("/api/status/<job_id>")
 def status(job_id):
+    uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path FROM jobs WHERE id=?",
-            (job_id,)
+            "SELECT status, created_at, started_at, finished_at, error, txt_path, srt_path FROM jobs WHERE id=? AND user_id=?",
+            (job_id, uid)
         ).fetchone()
 
     if not row:
@@ -290,10 +348,11 @@ def status(job_id):
 
 @app.route("/api/download/<job_id>")
 def download(job_id):
+    uid = get_user_id()
     fmt = request.args.get("format", "txt")
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
-            "SELECT txt_path, srt_path, status FROM jobs WHERE id=?", (job_id,)
+            "SELECT txt_path, srt_path, status FROM jobs WHERE id=? AND user_id=?", (job_id, uid)
         ).fetchone()
 
     if not row or row[2] != "done":
@@ -308,8 +367,9 @@ def download(job_id):
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
+    uid = get_user_id()
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT txt_path, srt_path FROM jobs WHERE id=?", (job_id,)).fetchone()
+        row = conn.execute("SELECT txt_path, srt_path FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
         if row:
             for p in row:
                 if p:
@@ -317,8 +377,10 @@ def delete_job(job_id):
                         Path(p).unlink(missing_ok=True)
                     except Exception:
                         pass
-        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        cur = conn.execute("DELETE FROM jobs WHERE id=? AND user_id=?", (job_id, uid))
         conn.commit()
+        if cur.rowcount == 0:
+            return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
     return jsonify({"status": "ok", "msg": "Задача удалена"})
 
 if __name__ == "__main__":
