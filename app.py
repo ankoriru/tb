@@ -3,7 +3,7 @@
 """
 Оффлайн транскрибатор видео для Amvera.
 - Изоляция по пользователям (X-User-ID)
-- Автоудаление файлов старше 48 часов
+- Автоудаление файлов старше 8 часов
 - Разделение по спикерам (эвристика по паузам)
 - Переименование спикеров после обработки
 """
@@ -35,8 +35,8 @@ MODEL_SIZE = "small"
 COMPUTE_TYPE = "int8"
 MAX_FILE_SIZE_MB = 500
 ALLOWED_EXT = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".mpeg", ".mpg", ".mp3", ".wav", ".m4a", ".ogg"}
-RETENTION_HOURS = 48
-SPEAKER_GAP_SECONDS = 1.2  # пауза для смены спикера
+RETENTION_HOURS = 8
+SPEAKER_GAP_SECONDS = 1.2
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ def init_db():
 
 init_db()
 
-# --- Ротация ---
+# --- Ротация: удаление старше 8 часов ---
 def cleanup_old_files():
     cutoff = (datetime.now() - timedelta(hours=RETENTION_HOURS)).isoformat()
     with sqlite3.connect(DB_PATH) as conn:
@@ -115,7 +115,7 @@ def cleanup_old_files():
         conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
         conn.execute("DELETE FROM speakers WHERE job_id NOT IN (SELECT id FROM jobs)")
         conn.commit()
-    print(f"🧹 Ротация: удалены записи старше {RETENTION_HOURS}ч.")
+    print(f"🧹 Ротация выполнена. Удалены записи старше {RETENTION_HOURS}ч.")
 
 def cleaner_loop():
     while True:
@@ -161,10 +161,6 @@ def seconds_to_srt_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 def diarize_segments(segments, gap=SPEAKER_GAP_SECONDS):
-    """
-    Эвристическое разделение по спикерам на основе пауз между сегментами.
-    Возвращает список {speaker, text, start, end}.
-    """
     result = []
     current_speaker = 1
     last_end = 0.0
@@ -216,11 +212,9 @@ def process_job(job_id: str, uid: str, video_path: Path):
                 vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500)
             )
 
-            # Diarization по паузам
             speaker_segments = diarize_segments(list(segments))
             speakers_json = json.dumps(speaker_segments, ensure_ascii=False)
 
-            # Определяем уникальных спикеров
             unique_speakers = sorted({s["speaker"] for s in speaker_segments})
             for spk in unique_speakers:
                 conn.execute(
@@ -229,7 +223,6 @@ def process_job(job_id: str, uid: str, video_path: Path):
                 )
             conn.commit()
 
-            # Имена по умолчанию
             speaker_names = {str(spk): f"Спикер {spk}" for spk in unique_speakers}
 
             base = u_result / job_id
@@ -256,7 +249,6 @@ def process_job(job_id: str, uid: str, video_path: Path):
         conn.close()
 
 def regenerate_files(job_id: str, uid: str):
-    """Перегенерировать TXT/SRT с учётом новых имён спикеров."""
     conn = sqlite3.connect(DB_PATH)
     try:
         row = conn.execute(
@@ -384,7 +376,6 @@ def status(job_id):
             "txt": f"/api/download/{job_id}?format=txt",
             "srt": f"/api/download/{job_id}?format=srt"
         }
-        # спикеры
         spk_rows = conn.execute("SELECT speaker_num, name FROM speakers WHERE job_id=?", (job_id,)).fetchall()
         result["speakers"] = {str(num): name for num, name in spk_rows}
     return jsonify(result)
@@ -396,7 +387,6 @@ def update_speakers(job_id):
     names = data.get("names", {})
     conn = sqlite3.connect(DB_PATH)
     try:
-        # проверим существование задачи
         row = conn.execute("SELECT 1 FROM jobs WHERE id=? AND user_id=?", (job_id, uid)).fetchone()
         if not row:
             return jsonify({"status": "error", "msg": "Задача не найдена"}), 404
@@ -410,7 +400,6 @@ def update_speakers(job_id):
             except ValueError:
                 continue
         conn.commit()
-        # перегенерировать файлы
         regenerate_files(job_id, uid)
         return jsonify({"status": "ok", "msg": "Имена спикеров обновлены"})
     finally:
