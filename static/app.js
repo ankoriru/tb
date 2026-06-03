@@ -125,6 +125,15 @@
             return (j.filename || '').toLowerCase().indexOf(term) !== -1 || (j.id || '').toLowerCase().indexOf(term) !== -1;
         });
 
+        var sb = $('sidebar');
+        if (sb) {
+            if (jobs.length > 0) {
+                sb.classList.remove('collapsed');
+            } else {
+                sb.classList.add('collapsed');
+            }
+        }
+
         var list = $('recordsList');
         if (!filtered.length) {
             if (list) list.innerHTML = '<div class="empty-state"><div style="font-size:48px">🎙️</div><p>Записей не найдено</p></div>';
@@ -290,10 +299,7 @@
                     }
                 }
 
-                var dtb = $('downloadTxtBtn');
-                var dsb = $('downloadSrtBtn');
-                if (dtb) dtb.style.display = '';
-                if (dsb) dsb.style.display = '';
+
             } else if (j.error) {
                 var tc = $('transcriptContent');
                 if (tc) tc.innerHTML = '<pre>Ошибка: ' + esc(j.error) + '</pre>';
@@ -303,10 +309,7 @@
                 if (tb) tb.style.display = 'none';
                 var apw = $('audioPlayerWrap');
                 if (apw) apw.style.display = 'none';
-                var dtb = $('downloadTxtBtn');
-                var dsb = $('downloadSrtBtn');
-                if (dtb) dtb.style.display = 'none';
-                if (dsb) dsb.style.display = 'none';
+
                 var chatSection = $('chatSection');
                 if (chatSection) chatSection.style.display = 'none';
             } else {
@@ -318,10 +321,7 @@
                 if (tb) tb.style.display = 'none';
                 var apw = $('audioPlayerWrap');
                 if (apw) apw.style.display = 'none';
-                var dtb = $('downloadTxtBtn');
-                var dsb = $('downloadSrtBtn');
-                if (dtb) dtb.style.display = 'none';
-                if (dsb) dsb.style.display = 'none';
+
                 var chatSection = $('chatSection');
                 if (chatSection) chatSection.style.display = 'none';
             }
@@ -599,6 +599,10 @@
     }
 
     function downloadWord(type) {
+        if (!currentJobId) {
+            toast('Сначала откройте запись', 'error');
+            return;
+        }
         var content, title;
         if (type === 'transcript') {
             content = $('transcriptContent');
@@ -614,8 +618,11 @@
         var a = document.createElement('a');
         a.href = url;
         a.download = title + '.doc';
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        toast('Файл Word скачан', 'success');
     }
 
     // --- Markdown ---
@@ -722,6 +729,8 @@
             var status = card.querySelector('.progress-status');
             if (status) status.textContent = 'Принято: ' + data.job_id;
             toast('Файл принят: ' + data.job_id, 'success');
+            var sb = $('sidebar');
+            if (sb) sb.classList.remove('collapsed');
             loadJobs();
         }).catch(function(e) {
             console.error('[APP] Upload error', e);
@@ -910,10 +919,6 @@
         if (sb) sb.classList.toggle('collapsed');
     });
 
-    on('newRecordBtn', 'click', function() {
-        console.log('[APP] newRecordBtn click');
-        showUpload();
-    });
     on('sidebarNewBtn', 'click', function() {
         console.log('[APP] sidebarNewBtn click');
         showUpload();
@@ -931,12 +936,6 @@
         });
     });
 
-    on('downloadTxtBtn', 'click', function() {
-        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=txt&user_id=' + encodeURIComponent(USER_ID), '_blank');
-    });
-    on('downloadSrtBtn', 'click', function() {
-        if (currentJobId) window.open(API + '/api/download/' + currentJobId + '?format=srt&user_id=' + encodeURIComponent(USER_ID), '_blank');
-    });
 
     on('saveSpeakersBtn', 'click', saveSpeakers);
 
@@ -1004,6 +1003,8 @@
             editingSpeakers = false;
             activeTab = 'transcript';
             chatHistory = [];
+            var sb = $('sidebar');
+            if (sb) sb.classList.add('collapsed');
             showUpload();
         }).catch(function(e) {
             toast('Ошибка очистки: ' + e.message, 'error');
